@@ -1,0 +1,17 @@
+<PAMDataset>
+  <Metadata>
+    <MDI key="grid_mapping">spatial_ref</MDI>
+    <MDI key="long_name">Gross Domestic Production (GDP) (PPP)</MDI>
+    <MDI key="units">('constant 2011 international US dollar', 'constant 2011 international US dollar', 'constant 2011 international US dollar')</MDI>
+  </Metadata>
+  <PAMRasterBand band="1">
+    <Description>Gross Domestic Production (GDP) (PPP)</Description>
+    <Metadata>
+      <MDI key="STATISTICS_MAXIMUM">69720192</MDI>
+      <MDI key="STATISTICS_MEAN">454356.18636541</MDI>
+      <MDI key="STATISTICS_MINIMUM">928.59069824219</MDI>
+      <MDI key="STATISTICS_STDDEV">2398265.1839196</MDI>
+      <MDI key="STATISTICS_VALID_PERCENT">5.541</MDI>
+    </Metadata>
+  </PAMRasterBand>
+</PAMDataset>

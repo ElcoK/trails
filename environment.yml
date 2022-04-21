@@ -1,0 +1,26 @@
+name: py39
+
+channels:
+    - conda-forge
+
+dependencies:
+        - python=3.9
+        - gdal
+        - numpy
+        - pandas
+        - shapely
+        - geopandas
+        - pygeos
+        - rasterio
+        - matplotlib
+        - cartopy
+        - contextily
+        - tqdm
+        - rasterstats
+        - pip
+        - seaborn
+        - jupyter
+        - jupyterlab
+        - python-igraph
+   
+          

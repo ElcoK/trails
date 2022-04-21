@@ -1,0 +1,18 @@
+basetable:
+  index: indices.csv
+  file: basetable.csv
+  type: csv
+  threshold: 0
+disaggregation:
+  - id: MDG
+    type: region
+    into: [reg0,reg1,reg2,reg3,reg4,reg5,reg6,reg7,reg8,reg9,reg10,reg11,reg12,reg13,reg14,reg15,reg16,reg17,reg18,reg19,reg20,reg21,reg22,reg23,reg24,reg25,reg26,reg27,reg28,reg29,reg30,reg31,reg32,reg33,reg34,reg35,reg36,reg37,reg38,reg39,reg40,reg41,reg42,reg43,reg44,reg45,reg46,reg47,reg48,reg49,reg50,reg51,reg52,reg53,reg54,reg55,reg56,reg57,reg58,reg59,reg60,reg61,reg62,reg63,reg64,reg65,reg66,reg67,reg68,reg69,reg70,reg71]    
+    proxies:
+      - level: 2
+        year: 2016
+        file: proxy_reg.csv   
+output:
+  file: output.csv
+  type: csv  
+  
+  
