@@ -5,11 +5,9 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import pygeos
 from osgeo import gdal
-from tqdm import tqdm
 import igraph as ig
 import contextily as ctx
 from rasterstats import zonal_stats
-import time
 import pylab as pl
 from IPython import display
 import seaborn as sns

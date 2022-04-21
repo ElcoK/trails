@@ -1,17 +1,11 @@
-import os,sys
 import igraph as ig
 import numpy as np
-import matplotlib.pyplot as plt
-import plotly.offline as py
 import math
 import random
-import matplotlib.pyplot as plt
 import pandas as pd
 import pygeos as pyg
-import geopandas as gpd
 from tqdm import tqdm
 from pathlib import Path
-from numpy import inf
 
 from population_OD import create_bbox,create_grid
 
@@ -19,8 +13,6 @@ data_path = Path(__file__).resolve().parents[2].joinpath('data','percolation')
 
 from multiprocessing import Pool,cpu_count
 from itertools import repeat
-from functools import reduce 
-import operator
 
 #import warnings
 #warnings.filterwarnings("ignore")
@@ -46,7 +38,6 @@ def metrics_Print(graph):
         m: 
     """    
     g = graph
-    m = []
     print("Number of edges: ", g.ecount())
     print("Number of nodes: ", g.vcount())
     print("Density: ", g.density())
@@ -183,7 +174,6 @@ def prepare_possible_OD(gridDF, nodes, tolerance = 1):
         final_possible_pop (list): a list of tuples representing the nodes and their population
     """    
 
-    nodeIDs = []
     sindex = pyg.STRtree(nodes['geometry'])
 
     pos_OD_nodes = []
@@ -196,7 +186,6 @@ def prepare_possible_OD(gridDF, nodes, tolerance = 1):
             pos_OD_nodes.append(ID)
             pos_tot_pop.append(i.tot_pop)
             
-    a = nodes.loc[nodes.id.isin(pos_OD_nodes)]
     #Create a geopackage of the possible ODs
     #with Geopackage('nodyBGR.gpkg', 'w') as out:
     #    out.add_layer(a, name='finanod', crs='EPSG:4326')
@@ -516,8 +505,6 @@ def percolation_random_attack(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP
     for path in get_paths:
             get_all_path_edges.append(path)  
             
-    edges_being_used = np.unique([item for sublist in [item for sublist in get_all_path_edges for item in sublist] for item in sublist])   
-
     demand = create_demand(OD_nodes, OD_orig, node_pop)
     exp_g = g.copy()
     trips_possible = True
@@ -616,19 +603,14 @@ def percolation_random_attack_od_buffer(edges, nodes,grid_height, del_frac=0.01,
 
     #Creates a matrix of shortest path times between OD nodes
     OD_orig = run_shortest_paths(g,OD_nodes,weighting='time',output='time')
-    OD_thresh = OD_orig * 10
-    
 
     demand = create_demand(OD_nodes, OD_orig, node_pop)
     exp_g = g.copy()
     trips_possible = True
-    pos_trip_no = (((OD_node_no**2) - OD_node_no) / 2) - ((np.count_nonzero(np.isinf(OD_orig)))/2)
-    counter = 0
     frac_counter = 0 
     tot_edge_length = np.sum(g.es['distance'])
     tot_edge_time = np.sum(g.es['time'])
 
-    total_edges = exp_g.ecount()
 
     # add frac 0.00 for better figures and results
     result_df.append((0.00, 0, 100, 0, 0.0, 0, 0.0, 0, 0.0, 0.0, 0.0, 
@@ -639,7 +621,6 @@ def percolation_random_attack_od_buffer(edges, nodes,grid_height, del_frac=0.01,
         if frac_counter > 0.3 and frac_counter <= 0.5: del_frac = 0.02
         if frac_counter > 0.5: del_frac = 0.05
         exp_edge_no = exp_g.ecount()
-        sample_probabilities = np.array(exp_g.es['distance'])/sum(exp_g.es['distance'])
 
         #The number of edges to delete
         no_edge_del = max(1,math.floor(del_frac * edge_no))
@@ -737,7 +718,6 @@ def percolation_targeted_attack(edges,country,network,OD_list=[], pop_list=[], G
         OD_nodes = random.sample(range(g.vcount()-1),100)
     else: 
         OD_nodes = OD_list
-    edge_no = g.ecount() 
     OD_node_no = len(OD_nodes)
 
     if pop_list == []: 
@@ -747,9 +727,6 @@ def percolation_targeted_attack(edges,country,network,OD_list=[], pop_list=[], G
 
     #Creates a matrix of shortest path times between OD nodes
     OD_orig = run_shortest_paths(g,OD_nodes,weighting='time',output='time')
-    OD_thresh = OD_orig * 10
-    
-     
     demand = create_demand(OD_nodes, OD_orig, node_pop)
     exp_g = g.copy()
 
@@ -802,7 +779,6 @@ def percolation_targeted_attack_speedup(edges,country,network,OD_list=[], pop_li
         OD_nodes = random.sample(range(g.vcount()-1),100)
     else: 
         OD_nodes = OD_list
-    edge_no = g.ecount() 
     OD_node_no = len(OD_nodes)
 
     if pop_list == []: 
@@ -812,7 +788,6 @@ def percolation_targeted_attack_speedup(edges,country,network,OD_list=[], pop_li
 
     #Creates a matrix of shortest path times between OD nodes
     OD_orig = run_shortest_paths(g,OD_nodes,weighting='time',output='time')
-    OD_thresh = OD_orig * 10
     
     #check which edges are actually being used
     get_paths = []
@@ -891,7 +866,6 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
         OD_nodes = random.sample(range(g.vcount()-1),100)
     else: 
         OD_nodes = OD_list
-    edge_no = g.ecount() 
     OD_node_no = len(OD_nodes)
 
     if pop_list == []: 
@@ -901,8 +875,7 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
 
     #Creates a matrix of shortest path times between OD nodes
     OD_orig = run_shortest_paths(g,OD_nodes,weighting='time',output='time')
-    OD_thresh = OD_orig * 10
-    
+   
     #check which edges are actually being used
     get_paths = []
     for x in (range(len(OD_nodes))):
@@ -917,10 +890,6 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
     # prepare further analysis
     demand = create_demand(OD_nodes, OD_orig, node_pop)
     exp_g = g.copy()
-    trips_possible = True
-    pos_trip_no = (((OD_node_no**2) - OD_node_no) / 2) - ((np.count_nonzero(np.isinf(OD_orig)))/2)
-    counter = 0
-    frac_counter = 0 
     tot_edge_length = np.sum(g.es['distance'])
     tot_edge_time = np.sum(g.es['time'])
 
@@ -1218,7 +1187,6 @@ def run_random_attack_percolations(country):
 
     # random attack
     run_percolation_random_attack(country,run_no=200,od_buffer=False,parallel=True)
-    #run_percolation_random_attack(country,run_no=200,od_buffer=True,parallel=True)
 
 def run_local_targeted_attack_percolations(country):
 
@@ -1244,7 +1212,6 @@ if __name__ == '__main__':
 
     # # run_percolation_targeted_attack('NLD')
     # # #run_percolation_per_grid(sys.argv[1],run_no=1
-    #run_random_attack_percolations('TZA')
     get_metrics_and_split('belgium_buffer')
     # for country in countries:
     #      run_random_attack_percolations(country)
