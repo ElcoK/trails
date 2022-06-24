@@ -357,7 +357,6 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
 
     Args:
         OD (np.matrix): Current OD matrix times (during percolation)
-        fail_value (int): Came form GOSTNETS , seems just to be a huge int
         demand (np.ndarray): Demand matrix
         baseline (np.matrix): OD matrix before percolation
         GDP_per_capita (int): GDP of relevant area
@@ -458,7 +457,6 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
 
     total_surp_loss_e1, total_pct_surplus_loss_e1 = surplus_loss(-0.15, adj_cost, baseline_cost, demand)
     total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost, baseline_cost, demand)
-
 
     return frac_counter, pct_isolated, pct_unaffected, pct_delayed, average_time_disruption, total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles
 
@@ -610,7 +608,6 @@ def percolation_random_attack_od_buffer(edges, nodes,grid_height, del_frac=0.01,
     frac_counter = 0 
     tot_edge_length = np.sum(g.es['distance'])
     tot_edge_time = np.sum(g.es['time'])
-
 
     # add frac 0.00 for better figures and results
     result_df.append((0.00, 0, 100, 0, 0.0, 0, 0.0, 0, 0.0, 0.0, 0.0, 
