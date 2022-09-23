@@ -2,7 +2,7 @@ import geopandas
 import pandas
 import os
 import numpy 
-from osgeo import ogr 
+from osgeo import ogr
 from tqdm import tqdm
 from pygeos import from_wkb
 
@@ -30,7 +30,7 @@ def query_b(geoType,keyCol,**valConstraint):
     return query 
 
 
-def retrieve(osm_path,geoType,keyCol,**valConstraint):
+def retrieve(osm_path, geoType, keyCol, **valConstraint):
     """
     Function to extract specified geometry and keys/values from OpenStreetMap
     Arguments:
@@ -43,37 +43,50 @@ def retrieve(osm_path,geoType,keyCol,**valConstraint):
     Returns:
         *GeoDataFrame* : a geopandas GeoDataFrame with all columns, geometries, and constraints specified.    
     """
-    driver=ogr.GetDriverByName('OSM')
+    driver = ogr.GetDriverByName('OSM')
     data = driver.Open(osm_path)
-    query = query_b(geoType,keyCol,**valConstraint)
+    query = query_b(geoType, keyCol, **valConstraint)
+    #q= "SELECT osm_id,highway,oneway,lanes,maxspeed FROM lines WHERE highway='primary' or highway='trunk' or highway='motorway' or highway='motorway_link' or highway='trunk_link' or highway='primary_link' or highway='secondary' or highway='secondary_link' or highway='tertiary' or highway='tertiary_link' AND highway IS NOT NULL"
+    #query = q
     sql_lyr = data.ExecuteSQL(query)
-    features =[]
+    features = []
     # cl = columns 
-    cl = ['osm_id'] 
-    for a in keyCol: cl.append(a)
+    cl = ['osm_id']
+    cl.extend(keyCol)
+
+    warning_skipped_OSM_features = 0
+
     if data is not None:
-        print('query is finished, lets start the loop')
-        for feature in tqdm(sql_lyr,desc='extract'):
+        print('Query is finished, lets start the loop')
+        for feature in tqdm(sql_lyr, desc='extract'):
             try:
                 if feature.GetField(keyCol[0]) is not None:
-                    geom = from_wkb(feature.geometry().ExportToWkb()) 
+                    wkb_geom = feature.geometry().ExportToWkb()
+                    geom = from_wkb(bytes(wkb_geom))
                     if geom is None:
                         continue
                     # field will become a row in the dataframe.
                     field = []
-                    for i in cl: field.append(feature.GetField(i))
-                    field.append(geom)   
+                    for i in cl:
+                        field.append(feature.GetField(i))
+                    field.append(geom)
                     features.append(field)
             except:
-                print("WARNING: skipped OSM feature")   
+                warning_skipped_OSM_features += 1
     else:
-        print("ERROR: Nonetype error when requesting SQL. Check required.")    
-    cl.append('geometry')                   
+        print("ERROR: Nonetype error when requesting SQL. Check required.")
+
+    if warning_skipped_OSM_features > 0:
+        print(f"WARNING: skipped {warning_skipped_OSM_features} OSM features")
+
+    cl.append('geometry')
+
     if len(features) > 0:
-        return pandas.DataFrame(features,columns=cl)
+        return pandas.DataFrame(features, columns=cl)
     else:
         print("WARNING: No features or No Memory. returning empty GeoDataFrame") 
-        return pandas.DataFrame(columns=['osm_id','geometry'])
+        return pandas.DataFrame(columns=['osm_id', 'geometry'])
+
 
 def roads(osm_path):
     """
@@ -84,8 +97,21 @@ def roads(osm_path):
     Returns:
         *GeoDataFrame* : a geopandas GeoDataFrame with all unique road linestrings.
     """   
-    return retrieve(osm_path,'lines',['highway','oneway','lanes','maxspeed']) 
- 
+    return retrieve(osm_path, 'lines',['highway','oneway','lanes','maxspeed'])
+
+
+def roads_bridges(osm_path):
+    """
+    Function to extract road linestrings from OpenStreetMap
+    Arguments:
+        *osm_path* : file path to the .osm.pbf file of the region
+        for which we want to do the analysis.
+    Returns:
+        *GeoDataFrame* : a geopandas GeoDataFrame with all unique road linestrings.
+    """
+    return retrieve(osm_path,'lines',['highway','oneway','lanes','maxspeed','bridge','tunnel']) #Changed this for now
+
+
 def railway(osm_path):
     """
     Function to extract railway linestrings from OpenStreetMap   
@@ -132,33 +158,71 @@ def mainRoads(osm_path):
 
 def primaryRoads(osm_path):
     """
-    Function to extract main road linestrings from OpenStreetMap    
+    Function to extract main road linestrings from OpenStreetMap
     Arguments:
-        *osm_path* : file path to the .osm.pbf file of the region 
-        for which we want to do the analysis.        
+        *osm_path* : file path to the .osm.pbf file of the region
+        for which we want to do the analysis.
     Returns:
-        *GeoDataFrame* : a geopandas GeoDataFrame with all unique main road linestrings.   
-    """ 
+        *GeoDataFrame* : a geopandas GeoDataFrame with all unique main road linestrings.
+    """
     return retrieve(osm_path,'lines',['highway','oneway','lanes','maxspeed'],**{'highway':["='primary' or ","='trunk' or ","='motorway' or ","='motorway_link' or ","='trunk_link' or ","='primary_link'"]})
 
 def prisecRoads(osm_path):
     """
-    Function to extract main road linestrings from OpenStreetMap    
+    Function to extract main road linestrings from OpenStreetMap
     Arguments:
-        *osm_path* : file path to the .osm.pbf file of the region 
-        for which we want to do the analysis.        
+        *osm_path* : file path to the .osm.pbf file of the region
+        for which we want to do the analysis.
     Returns:
-        *GeoDataFrame* : a geopandas GeoDataFrame with all unique main road linestrings.   
-    """ 
+        *GeoDataFrame* : a geopandas GeoDataFrame with all unique main road linestrings.
+    """
     return retrieve(osm_path,'lines',['highway','oneway','lanes','maxspeed'],**{'highway':["='primary' or ","='trunk' or ","='motorway' or ","='motorway_link' or ","='trunk_link' or ","='primary_link' or ", "='secondary' or ", "='secondary_link'"]})
 
 def motorwayRoads(osm_path):
     """
-    Function to extract main road linestrings from OpenStreetMap    
+    Function to extract main road linestrings from OpenStreetMap
     Arguments:
-        *osm_path* : file path to the .osm.pbf file of the region 
-        for which we want to do the analysis.        
+        *osm_path* : file path to the .osm.pbf file of the region
+        for which we want to do the analysis.
     Returns:
-        *GeoDataFrame* : a geopandas GeoDataFrame with all unique main road linestrings.   
-    """ 
+        *GeoDataFrame* : a geopandas GeoDataFrame with all unique main road linestrings.
+    """
     return retrieve(osm_path,'lines',['highway','oneway','lanes','maxspeed'],**{'highway':["='motorway' or ","='motorway_link'"]})
+
+# def preselected_road_types(osm_path,road_types):
+#     """
+#     Function to extract main road linestrings from OpenStreetMap, for a preselected list of road types
+#     Arguments:
+#         *osm_path* : file path to the .osm.pbf file of the region
+#         for which we want to do the analysis.
+#         *road_types* [list of strings]
+#     Returns:
+#         *GeoDataFrame* : a geopandas GeoDataFrame with all unique main road linestrings.
+#     """
+#     include_links = True #automatically also create a _link variant per road type
+#     new_road_types = []
+#
+#     if include_links:
+#         for road_type in road_types:
+#             new_road_types.append(road_type)
+#             item = road_type + '_link'
+#             new_road_types.append(item)
+#     else:
+#         new_road_types = [r for r in road_types]
+#
+#
+#
+#     highway_list = []
+#     for i,road_type in enumerate(new_road_types):
+#         item = "='{}'".format(road_type)
+#         if not i == len(new_road_types) - 1:
+#             item += " and" # Only don't do this for the list item
+#         highway_list.append(item)
+#
+#
+#     constraints = {'highway': highway_list}
+#
+#     retrieve(osm_path, 'lines', ['highway', 'oneway', 'lanes', 'maxspeed'], **{
+#         'highway': ["='primary' or ", "='trunk' or ", "='motorway' or ", "='motorway_link' or ", "='trunk_link' or ",
+#                     "='primary_link' or ", "='secondary' or ", "='secondary_link'"]})
+

@@ -23,13 +23,13 @@ countries = ['ABW', 'AFG', 'AGO', 'AIA', 'ALA', 'ALB', 'AND', 'ARE', 'ARG', 'ARM
 countries = ['DEU', 'FRA', 'USA', 'CHN','RUS']
 
 def filename(country):
-    osm_prefix = 'C://Data//kees_pbf/'
+    osm_prefix = '/scistor/ivm/data_catalogue/open_street_map/country_osm/'
     osm_suffix = ".osm.pbf"
     return osm_prefix + country + osm_suffix
 
 if __name__ == '__main__':       
     #data_path = Path("/scistor/ivm/data_catalogue/open_street_map")
-    data_path = Path("C://Data//kees_pbf")
+    data_path = Path("C://Data")
 
     def simp(x):
         print(x)

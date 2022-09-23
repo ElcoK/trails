@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore")
 from multiprocessing import Pool,cpu_count
 from rasterstats import zonal_stats,point_query
 from pathlib import Path
-import feather
+# import feather
 import numpy as np
 
 def create_bbox(df):

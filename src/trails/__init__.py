@@ -4,7 +4,7 @@ import pkg_resources
 
 # Define what is accessible directly on snkit, when a client writes::
 #   from snkit import Network
-from snkit.simplify import Network
+# from snkit.simplify import Network
 
 __author__ = "Tom Russell"
 __copyright__ = "Tom Russell"

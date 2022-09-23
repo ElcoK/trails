@@ -5,9 +5,11 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import pygeos
 from osgeo import gdal
+from tqdm import tqdm
 import igraph as ig
 import contextily as ctx
 from rasterstats import zonal_stats
+import time
 import pylab as pl
 from IPython import display
 import seaborn as sns
@@ -23,11 +25,12 @@ gdal.SetConfigOption("OSM_CONFIG_FILE", os.path.join(code_path,'..','..',"osmcon
 from shapely.wkb import loads
 data_path = os.path.join('..','data')
 
-from simplify import *
-from extract import railway,ferries,mainRoads,roads
-from population_OD import create_bbox,create_grid
+from src.trails.simplify import *
+from src.trails.extract import railway,ferries,mainRoads,roads,prisecRoads
+from src.trails.population_OD import create_bbox,create_grid
 
-pd.options.mode.chained_assignment = None  
+pd.options.mode.chained_assignment = None
+
 
 def closest_node(node, nodes):
     """[summary]
@@ -59,17 +62,51 @@ def load_network(osm_path,mainroad=True):
 
     net = Network(edges=df)
     net = clean_roundabouts(net)
-    net = split_edges_at_nodes(net)
+    #net = split_edges_at_nodes(net) #This raises a key error because there somehow are no nodes
     net = add_endpoints(net)
     net = add_ids(net)
-    net = add_topology(net)    
+    net = add_topology(net)  #Todo: somewhere over here it gets slows
     net = drop_hanging_nodes(net)    
     net = merge_edges(net)
     net = reset_ids(net) 
     net = add_distances(net)
-    net = merge_multilinestrings(net)
-    net = fill_attributes(net)
-    net = add_travel_time(net)   
+    net = merge_multilinestrings(net) #Untill here it works well.
+    #net = fill_attributes(net) #Causes error
+    #net = add_travel_time(net) #Causes error
+
+    return net
+
+def load_network_ra2ce_10a(osm_path,mainroad=True):
+    """[summary]
+
+    Args:
+        osm_path ([type]): [description]
+        mainroad (bool, optional): [description]. Defaults to True.
+
+    Returns:
+        [type]: [description]
+    """
+    # if mainroad:
+    #     df = mainRoads(osm_path)
+    # else:
+    #     df = roads(osm_path)
+    #df = prisecRoads(osm_path)
+
+    df = roads(osm_path)
+
+    net = Network(edges=df)
+    net = clean_roundabouts(net)
+    #net = split_edges_at_nodes(net) #This raises a key error because there somehow are no nodes
+    net = add_endpoints(net)
+    net = add_ids(net)
+    net = add_topology(net)  #Todo: somewhere over here it gets slows
+    net = drop_hanging_nodes(net)
+    net = merge_edges(net)
+    net = reset_ids(net)
+    net = add_distances(net)
+    net = merge_multilinestrings(net) #Untill here it works well.
+    net = fill_attributes(net) #Causes error
+    net = add_travel_time(net) #Causes error
 
     return net
 
@@ -149,7 +186,8 @@ def country_grid_gdp_filled(trans_network,country,data_path,rough_grid_split=100
 
     return gdf_admin
 
-def convert_crs(gdf,current_crs="epsg:4326"):
+
+def convert_crs(gdf, current_crs = "epsg:4326"):
     """[summary]
 
     Args:

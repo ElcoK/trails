@@ -19,7 +19,7 @@ import subprocess
 from shapely.wkb import loads
 import time
 from timeit import default_timer as timer
-import feather
+# import feather
 import igraph as ig
 
 from pandas import DataFrame
@@ -31,15 +31,15 @@ from pathlib import Path
 # path to python scripts
 sys.path.append(os.path.join('..','src','trails'))
 
-from flow_model import *
-from simplify import *
-from extract import railway,ferries,mainRoads,roads
+from src.trails.flow_model import *
+from src.trails.simplify import *
+from src.trails.extract import railway,ferries,mainRoads,roads
 import pathlib
 pd.options.mode.chained_assignment = None  
 #data_path = os.path.join('..','data')
 data_path = (Path(__file__).parent.absolute().parent.absolute().parent.absolute())
 
-data_path = Path(r'C://Data//kees_pbf')
+data_path = Path(r'C:/data/')
 road_types = ['primary','trunk','motorway','motorway_link','trunk_link','primary_link','secondary','secondary_link','tertiary','tertiary_link']
 
 # optional progress bars
@@ -159,7 +159,8 @@ def add_topology(network, id_col='id'):
 
     Returns:
         network (class): A network composed of nodes (points in space) and edges (lines)
-    """    
+    """
+    print('Adding topology')
 
     from_ids = []
     to_ids = []
@@ -183,7 +184,8 @@ def add_topology(network, id_col='id'):
             bugs.append(edge.id)
             to_ids.append(-1)
 
-    #print(len(bugs)," Edges not connected to nodes")
+    print(len(bugs), " Edges not connected to nodes")
+
     edges = network.edges.copy()
     nodes = network.nodes.copy()
     edges['from_id'] = from_ids
@@ -304,6 +306,7 @@ def merge_multilinestrings(network):
     Returns:
         network (class): A network composed of nodes (points in space) and edges (lines)
     """    
+    print("Merge_multilinestrings")
     edges = network.edges.copy()
     edges['geometry']= edges.geometry.apply(lambda x: merge_multilinestring(x))
     return Network(edges=edges,
@@ -553,7 +556,7 @@ def add_distances(network):
     Returns:
         network (class): A network composed of nodes (points in space) and edges (lines)
     """    
-
+    print("Start add distances")
     #Find crs of current df and arbitrary point(lat,lon) for new crs
     current_crs="epsg:4326"
     #The commented out crs does not work in all cases
@@ -585,7 +588,8 @@ def add_travel_time(network):
     Returns:
         network (class): A network composed of nodes (points in space) and edges (lines)
 
-    """    
+    """
+    print("Start add_travel_time")
     if 'distance' not in network.nodes.columns:
         network = add_distances(network)
     speed_d = {
@@ -655,7 +659,8 @@ def drop_hanging_nodes(network, tolerance = 0.005):
     Returns:
         network (class): A network composed of nodes (points in space) and edges (lines)
 
-    """    
+    """
+    print("Start drop_hanging_nodes")
     if 'degree' not in network.nodes.columns:
         deg = calculate_degree(network)
     else: deg = network.nodes['degree'].to_numpy()
@@ -696,7 +701,8 @@ def drop_hanging_nodes(network, tolerance = 0.005):
     #nod = n.loc[n.degree > 0].reset_index(drop=True)
     return Network(nodes = n,edges=edg)
 
-def merge_edges(network, print_err=False):
+
+def merge_edges(network, keys_not_to_split, print_err=False):
     """This method removes all degree 2 nodes and merges their associated edges, at 
     the moment it arbitrarily uses the first edge's attributes for the new edges 
     column attributes, in the future the mean or another measure can be used 
@@ -711,108 +717,133 @@ def merge_edges(network, print_err=False):
 
     Returns:
         network (class): A network composed of nodes (points in space) and edges (lines)
-    """    
+    """
+    print('Start merge_edges')
+
     net = network
     nod = net.nodes.copy()
     edg = net.edges.copy()
-    optional_cols = edg.columns.difference(['osm_id','geometry','from_id','to_id','id'])
+    optional_cols = edg.columns.difference(['osm_id', 'geometry', 'from_id', 'to_id', 'id'])
     edg_sindex = pygeos.STRtree(network.edges.geometry)
     if 'degree' not in network.nodes.columns:
         deg = calculate_degree(network)
-    else: deg = nod['degree'].to_numpy()
-    #For the 0.002s speed up, alternatively do a straightforward loc[degree==2]
+    else:
+        deg = nod['degree'].to_numpy()
+
+    # For the 0.002s speed up, alternatively do a straightforward loc[degree==2]
     degree2 = np.where(deg==2)
-    #n2: is the set of all node IDs that are degree 2
+
+    # n2: is the set of all node IDs that are degree 2
     n2 = set((nod['id'].iloc[degree2]))
+
     #TODO if you create a dictionary to mask values this geometry
     #array nodGeom can be made to only contain the 'geometry' of degree 2
     #nodes
     nodGeom = nod['geometry']
-    eIDtoRemove =[]
+    eIDtoRemove = []
     nIDtoRemove =[]
 
-    c = 0
-    #pbar = tqdm(total=len(n2))
-    while n2:   
+    pbar = tqdm(total=len(n2))
+    while n2:
         newEdge = []
         info_first_edge = []
         possibly_delete = []
         pos_0_deg = []
         nodeID = n2.pop()
         pos_0_deg.append(nodeID)
-        #Co-ordinates of current node
+
+        # Co-ordinates of current node
         node_geometry = nodGeom[nodeID]
-        eID = set(edg_sindex.query(node_geometry,predicate='intersects'))
-        #Find the nearest 2 edges, unless there is an error in the dataframe
-        #this will return the connected edges using spatial indexing
-        if len(eID) > 2: edgePath1, edgePath2 = find_closest_2_edges(eID,nodeID,edg,node_geometry)
-        elif len(eID) < 2: 
+        eID = set(edg_sindex.query(node_geometry, predicate='intersects'))
+
+        # Find the nearest 2 edges, unless there is an error in the dataframe
+        # this will return the connected edges using spatial indexing
+        if len(eID) > 2:
+            edgePath1, edgePath2 = find_closest_2_edges(eID, nodeID, edg, node_geometry)
+        elif len(eID) < 2:
             continue
-        else: 
+        else:
             edgePath1 = edg.iloc[eID.pop()]
-            edgePath2 = edg.iloc[eID.pop()] 
-        #For the two edges found, identify the next 2 nodes in either direction    
-        nextNode1 = edgePath1.to_id if edgePath1.from_id==nodeID else edgePath1.from_id
-        nextNode2 = edgePath2.to_id if edgePath2.from_id==nodeID else edgePath2.from_id
-        if nextNode1==nextNode2: continue
+            edgePath2 = edg.iloc[eID.pop()]
+
+        if any(edgePath1[k] is not None for k in keys_not_to_split):
+            print([edgePath1[k] for k in keys_not_to_split])
+            continue
+
+        if any(edgePath2[k] is not None for k in keys_not_to_split):
+            print([edgePath2[k] for k in keys_not_to_split])
+            continue
+
+        # For the two edges found, identify the next 2 nodes in either direction
+        nextNode1 = edgePath1.to_id if edgePath1.from_id == nodeID else edgePath1.from_id
+        nextNode2 = edgePath2.to_id if edgePath2.from_id == nodeID else edgePath2.from_id
+        if nextNode1 == nextNode2:
+            continue
         possibly_delete.append(edgePath2.id)
-        #At the moment the first edge information is used for the merged edge
+
+        # At the moment the first edge information is used for the merged edge
         info_first_edge = edgePath1.id
         newEdge.append(edgePath1.geometry)
         newEdge.append(edgePath2.geometry)
-        #While the next node along the path is degree 2 keep traversing
+
+        # While the next node along the path is degree 2 keep traversing
         while deg[nextNode1] == 2:
-            if nextNode1 in pos_0_deg: break
+            if nextNode1 in pos_0_deg:
+                break
             nextNode1Geom = nodGeom[nextNode1]
-            eID = set(edg_sindex.query(nextNode1Geom,predicate='intersects'))
+            eID = set(edg_sindex.query(nextNode1Geom, predicate='intersects'))
             eID.discard(edgePath1.id)
             try:
                 edgePath1 = min([edg.iloc[match_idx] for match_idx in eID],
-                key= lambda match: pygeos.distance(nextNode1Geom,(match.geometry)))
-            except: 
+                key=lambda match: pygeos.distance(nextNode1Geom, (match.geometry)))
+            except:
                 continue
             pos_0_deg.append(nextNode1)
             n2.discard(nextNode1)
-            nextNode1 = edgePath1.to_id if edgePath1.from_id==nextNode1 else edgePath1.from_id
+            nextNode1 = edgePath1.to_id if edgePath1.from_id == nextNode1 else edgePath1.from_id
             newEdge.append(edgePath1.geometry)
             possibly_delete.append(edgePath1.id)
 
         while deg[nextNode2] == 2:
-            if nextNode2 in pos_0_deg: break
+            if nextNode2 in pos_0_deg:
+                break
             nextNode2Geom = nodGeom[nextNode2]
             eID = set(edg_sindex.query(nextNode2Geom,predicate='intersects'))
             eID.discard(edgePath2.id)
             try:
                 edgePath2 = min([edg.iloc[match_idx] for match_idx in eID],
                 key= lambda match: pygeos.distance(nextNode2Geom,(match.geometry)))
-            except: continue
+            except:
+                continue
             pos_0_deg.append(nextNode2)
             n2.discard(nextNode2)
             nextNode2 = edgePath2.to_id if edgePath2.from_id==nextNode2 else edgePath2.from_id
             newEdge.append(edgePath2.geometry)
             possibly_delete.append(edgePath2.id)
-        #Update the information of the first edge
+
+        # Update the information of the first edge
         new_merged_geom = pygeos.line_merge(pygeos.multilinestrings([x for x in newEdge]))
         if pygeom.get_type_id(new_merged_geom) == 1: 
-            edg.at[info_first_edge,'geometry'] = new_merged_geom
-            if nodGeom[nextNode1]==pygeom.get_point(new_merged_geom,0):
-                edg.at[info_first_edge,'from_id'] = nextNode1
-                edg.at[info_first_edge,'to_id'] = nextNode2
+            edg.at[info_first_edge, 'geometry'] = new_merged_geom
+            if nodGeom[nextNode1] == pygeom.get_point(new_merged_geom, 0):
+                edg.at[info_first_edge, 'from_id'] = nextNode1
+                edg.at[info_first_edge, 'to_id'] = nextNode2
             else: 
-                edg.at[info_first_edge,'from_id'] = nextNode2
-                edg.at[info_first_edge,'to_id'] = nextNode1
+                edg.at[info_first_edge, 'from_id'] = nextNode2
+                edg.at[info_first_edge, 'to_id'] = nextNode1
             eIDtoRemove += possibly_delete
             possibly_delete.append(info_first_edge)
             for x in pos_0_deg:
                 deg[x] = 0
             mode_edges = edg.loc[edg.id.isin(possibly_delete)]
-            edg.at[info_first_edge,optional_cols] = mode_edges[optional_cols].mode().iloc[0].values
+            edg.iloc[info_first_edge][optional_cols] = mode_edges[optional_cols].mode().iloc[0].values
         else:
-            if print_err: print("Line", info_first_edge, "failed to merge, has pygeos type ", pygeom.get_type_id(edg.at[info_first_edge,'geometry']))
+            if print_err:
+                print("Line", info_first_edge, "failed to merge, has pygeos type ", pygeom.get_type_id(edg.at[info_first_edge,'geometry']))
 
-        #pbar.update(1)
+        pbar.update(1)
     
-    #pbar.close()
+    pbar.close()
     edg = edg.loc[~(edg.id.isin(eIDtoRemove))].reset_index(drop=True)
 
     #We remove all degree 0 nodes, including those found in dropHanging
@@ -1166,7 +1197,8 @@ def reset_ids(network):
 
     Returns:
         [type]: [description]
-    """    
+    """
+    print('Resetting IDs')
     nodes = network.nodes.copy()
     edges = network.edges.copy()
     to_ids =  edges['to_id'].to_numpy()
@@ -1253,7 +1285,8 @@ def fill_attributes(network):
 
     Returns:
         [type]: [description]
-    """    
+    """
+    print("Start fill_attributes")
     speed_d = {
         'motorway':'80',
         'motorway_link': '65',
@@ -1358,24 +1391,28 @@ def fill_attributes(network):
             return 'no'
 
     def fill_lanes(x):
-        if isinstance(x.lanes,str):
-            try:
-              return int(x.lanes)  
-            except:
+        try: #todo: quickfix by Kees 15/8/2022
+            if isinstance(x.lanes,str):
                 try:
-                    return int(get_max(re.findall(r'\d+', x.lanes)))
+                  return int(x.lanes)
                 except:
-                    return int(vals_to_assign.loc[x.highway].lanes)                  
-        elif x.lanes is None:
-            if isinstance(vals_to_assign.loc[x.highway].lanes,np.ndarray):
-                return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].lanes))
-            else:           
-                return int(vals_to_assign.loc[x.highway].lanes)
-        elif np.isnan(x.lanes):
-            if isinstance(vals_to_assign.loc[x.highway].lanes,np.ndarray):
-                return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].lanes))
-            else:           
-                return int(vals_to_assign.loc[x.highway].lanes)
+                    try:
+                        return int(get_max(re.findall(r'\d+', x.lanes)))
+                    except:
+                        return int(vals_to_assign.loc[x.highway].lanes)
+            elif x.lanes is None:
+                if isinstance(vals_to_assign.loc[x.highway].lanes,np.ndarray):
+                    return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].lanes))
+                else:
+                    return int(vals_to_assign.loc[x.highway].lanes)
+            elif np.isnan(x.lanes):
+                if isinstance(vals_to_assign.loc[x.highway].lanes,np.ndarray):
+                    return int(get_max(vals_to_assign.loc[x.highway.split('_')[0]].lanes))
+                else:
+                    return int(vals_to_assign.loc[x.highway].lanes)
+        except Exception as e:
+            print(e,x)
+            return np.nan
             
     def fill_maxspeed(x):
         if isinstance(x.maxspeed,str):
@@ -1423,7 +1460,7 @@ def simplified_network(df,drop_hanging_nodes_run=True,fill_attributes_run=True):
 
     Returns:
         [type]: [description]
-    """    
+    """
     net = Network(edges=df)
     net = clean_roundabouts(net)
     net = add_endpoints(net)

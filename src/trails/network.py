@@ -63,6 +63,13 @@ def graph_load(edges):
     edges = edges.reindex(['from_id','to_id'] + [x for x in list(edges.columns) if x not in ['from_id','to_id']],axis=1)
     graph = ig.Graph.TupleList(edges.itertuples(index=False), edge_attrs=list(edges.columns)[2:],directed=False)
     graph.vs['id'] = graph.vs['name']
+    # graph = ig.Graph(directed=False)
+    # max_node_id = max(max(edges.from_id),max(edges.to_id))
+    # graph.add_vertices(max_node_id+1)
+    # edge_tuples = zip(edges.from_id,edges.to_id)
+    # graph.add_edges(edge_tuples)
+    # graph.es['distance'] = edges.distance
+    # graph.es['time'] = edges.time
     return graph
     
 def graph_load_largest(edges):
@@ -181,11 +188,11 @@ def prepare_possible_OD(gridDF, nodes, tolerance = 1):
     for i in gridDF.itertuples():
         ID = nearest(i.geometry, nodes, sindex, tolerance)
         #If a node was found
-        #if ID > -1:
-        if isinstance(ID,str):
+        if ID > -1: 
             pos_OD_nodes.append(ID)
             pos_tot_pop.append(i.tot_pop)
-            
+
+    a = nodes.loc[nodes.id.isin(pos_OD_nodes)]
     #Create a geopackage of the possible ODs
     #with Geopackage('nodyBGR.gpkg', 'w') as out:
     #    out.add_layer(a, name='finanod', crs='EPSG:4326')
@@ -335,7 +342,7 @@ def get_metrics_and_split(x):
         print(x+" failed because of {}".format(e))
 
 def run_shortest_paths(graph,OD_nodes,weighting='time',output='time'):
-    
+
     collect_all_values = []
     for x in (range(len(OD_nodes))):
         get_paths = graph.get_shortest_paths(OD_nodes[x],OD_nodes,weights=weighting,output='epath')
@@ -357,6 +364,7 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
 
     Args:
         OD (np.matrix): Current OD matrix times (during percolation)
+        fail_value (int): Came form GOSTNETS , seems just to be a huge int
         demand (np.ndarray): Demand matrix
         baseline (np.matrix): OD matrix before percolation
         GDP_per_capita (int): GDP of relevant area
@@ -458,6 +466,7 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     total_surp_loss_e1, total_pct_surplus_loss_e1 = surplus_loss(-0.15, adj_cost, baseline_cost, demand)
     total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost, baseline_cost, demand)
 
+
     return frac_counter, pct_isolated, pct_unaffected, pct_delayed, average_time_disruption, total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles
 
 
@@ -491,9 +500,10 @@ def percolation_random_attack(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP
     else:
          node_pop = pop_list
 
+
     #Creates a matrix of shortest path times between OD nodes
     OD_orig = run_shortest_paths(g,OD_nodes,weighting='time',output='time')
-    
+
     #check which edges are actually being used
     get_paths = []
     for x in (range(len(OD_nodes))):
@@ -501,8 +511,8 @@ def percolation_random_attack(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP
 
     get_all_path_edges = []
     for path in get_paths:
-            get_all_path_edges.append(path)  
-            
+            get_all_path_edges.append(path)
+
     demand = create_demand(OD_nodes, OD_orig, node_pop)
     exp_g = g.copy()
     trips_possible = True
@@ -535,7 +545,7 @@ def percolation_random_attack(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP
               
         cur_dis_length = 1 - (np.sum(exp_g.es['distance'])/tot_edge_length)
         cur_dis_time = 1 - (np.sum(exp_g.es['time'])/tot_edge_time)
-        
+
         #get new matrix
         perc_matrix = run_shortest_paths(exp_g,OD_nodes,weighting='time',output='time')
         np.fill_diagonal(perc_matrix, np.nan)
@@ -715,6 +725,7 @@ def percolation_targeted_attack(edges,country,network,OD_list=[], pop_list=[], G
         OD_nodes = random.sample(range(g.vcount()-1),100)
     else: 
         OD_nodes = OD_list
+    edge_no = g.ecount() 
     OD_node_no = len(OD_nodes)
 
     if pop_list == []: 
@@ -738,7 +749,7 @@ def percolation_targeted_attack(edges,country,network,OD_list=[], pop_list=[], G
         
         cur_dis_length = 1 - (np.sum(exp_g.es['distance'])/tot_edge_length)
         cur_dis_time = 1 - (np.sum(exp_g.es['time'])/tot_edge_time)
-        
+
         #get new matrix
         perc_matrix = run_shortest_paths(exp_g,OD_nodes,weighting='time',output='time')
         np.fill_diagonal(perc_matrix, np.nan)
@@ -793,10 +804,9 @@ def percolation_targeted_attack_speedup(edges,country,network,OD_list=[], pop_li
 
     get_all_path_edges = []
     for path in get_paths:
-            get_all_path_edges.append(path)  
-            
-    edges_being_used = np.unique([item for sublist in [item for sublist in get_all_path_edges for item in sublist] for item in sublist])   
+            get_all_path_edges.append(path)
 
+    edges_being_used = np.unique([item for sublist in [item for sublist in get_all_path_edges for item in sublist] for item in sublist])
 
     demand = create_demand(OD_nodes, OD_orig, node_pop)
     exp_g = g.copy()
@@ -872,7 +882,7 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
 
     #Creates a matrix of shortest path times between OD nodes
     OD_orig = run_shortest_paths(g,OD_nodes,weighting='time',output='time')
-   
+
     #check which edges are actually being used
     get_paths = []
     for x in (range(len(OD_nodes))):
@@ -880,9 +890,9 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
 
     get_all_path_edges = []
     for path in get_paths:
-            get_all_path_edges.append(path)  
-            
-    edges_being_used = np.unique([item for sublist in [item for sublist in get_all_path_edges for item in sublist] for item in sublist])   
+            get_all_path_edges.append(path)
+
+    edges_being_used = np.unique([item for sublist in [item for sublist in get_all_path_edges for item in sublist] for item in sublist])
 
     # prepare further analysis
     demand = create_demand(OD_nodes, OD_orig, node_pop)
@@ -915,8 +925,8 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
             perc_matrix = run_shortest_paths(exp_g,OD_nodes,weighting='time',output='time')
             np.fill_diagonal(perc_matrix, np.nan)
             perc_matrix[perc_matrix == 0] = 99999999999
-            
-            results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,random_grid.index.values[0],cur_dis_length,cur_dis_time) 
+
+            results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,random_grid.index.values[0],cur_dis_length,cur_dis_time)
             
             result_df.append(results)
 
@@ -967,7 +977,6 @@ def run_percolation_random_attack(country,run_no=200,od_buffer=False,parallel=Fa
             edges = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
             nodes = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
             nodes.geometry = pyg.from_wkb(nodes.geometry)
-
 
             edges.from_id = ['n_{}'.format(x) for x in edges.from_id]
             edges.to_id = ['n_{}'.format(x) for x in edges.to_id]
@@ -1212,5 +1221,5 @@ if __name__ == '__main__':
     get_metrics_and_split('belgium_buffer')
     # for country in countries:
     #      run_random_attack_percolations(country)
-    # with Pool(17) as pool: 
-    #     pool.map(run_local_targeted_attack_percolations,countries,chunksize=1)   
+    # with Pool(17) as pool:
+    #     pool.map(run_local_targeted_attack_percolations,countries,chunksize=1)
