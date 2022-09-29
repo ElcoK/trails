@@ -702,7 +702,7 @@ def drop_hanging_nodes(network, tolerance = 0.005):
     return Network(nodes = n,edges=edg)
 
 
-def merge_edges(network, keys_not_to_split, print_err=False):
+def merge_edges(network, keys_not_to_split=[], print_err=False):
     """This method removes all degree 2 nodes and merges their associated edges, at 
     the moment it arbitrarily uses the first edge's attributes for the new edges 
     column attributes, in the future the mean or another measure can be used 
@@ -713,6 +713,7 @@ def merge_edges(network, keys_not_to_split, print_err=False):
 
     Args:
         network (class): A network composed of nodes (points in space) and edges (lines)
+        keys_not_to_split (list) : list of at which you don't want to split
         print_err (bool, optional): [description]. Defaults to False.
 
     Returns:
@@ -735,6 +736,10 @@ def merge_edges(network, keys_not_to_split, print_err=False):
 
     # n2: is the set of all node IDs that are degree 2
     n2 = set((nod['id'].iloc[degree2]))
+
+    #Added by Kees 29/9/2022:
+    #For these nodes, check if they have different metadata of keys_not_to_split
+
 
     #TODO if you create a dictionary to mask values this geometry
     #array nodGeom can be made to only contain the 'geometry' of degree 2
@@ -766,6 +771,8 @@ def merge_edges(network, keys_not_to_split, print_err=False):
             edgePath1 = edg.iloc[eID.pop()]
             edgePath2 = edg.iloc[eID.pop()]
 
+        ### Todo: F edits start:
+        ### Todo: do not check for not None, but for information that is different!
         if any(edgePath1[k] is not None for k in keys_not_to_split):
             print([edgePath1[k] for k in keys_not_to_split])
             continue
@@ -773,6 +780,7 @@ def merge_edges(network, keys_not_to_split, print_err=False):
         if any(edgePath2[k] is not None for k in keys_not_to_split):
             print([edgePath2[k] for k in keys_not_to_split])
             continue
+        ### Todo: F edits till here
 
         # For the two edges found, identify the next 2 nodes in either direction
         nextNode1 = edgePath1.to_id if edgePath1.from_id == nodeID else edgePath1.from_id
@@ -798,6 +806,13 @@ def merge_edges(network, keys_not_to_split, print_err=False):
                 key=lambda match: pygeos.distance(nextNode1Geom, (match.geometry)))
             except:
                 continue
+
+            #Todo: Addition by Kees 29/9/2022
+            #Stop traversing if one of the keys is not none
+            if any(edgePath1[k] is not None for k in keys_not_to_split):
+                print('traversing A: ',[edgePath1[k] for k in keys_not_to_split])
+                break
+
             pos_0_deg.append(nextNode1)
             n2.discard(nextNode1)
             nextNode1 = edgePath1.to_id if edgePath1.from_id == nextNode1 else edgePath1.from_id
@@ -815,6 +830,13 @@ def merge_edges(network, keys_not_to_split, print_err=False):
                 key= lambda match: pygeos.distance(nextNode2Geom,(match.geometry)))
             except:
                 continue
+
+            # Todo: Addition by Kees 29/9/2022
+            # Stop traversing if one of the keys is not none
+            if any(edgePath2[k] is not None for k in keys_not_to_split):
+                print('traversing B: ', [edgePath2[k] for k in keys_not_to_split])
+                break
+
             pos_0_deg.append(nextNode2)
             n2.discard(nextNode2)
             nextNode2 = edgePath2.to_id if edgePath2.from_id==nextNode2 else edgePath2.from_id
