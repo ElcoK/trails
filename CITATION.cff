@@ -8,7 +8,7 @@ authors:
 - family-names: "Russell"
   given-names: "Tom"
 title: "Trade and tRAnsport Impact and fLow analysiS (TRAILS)"
-version: 0.5
+version: "0.6"
 doi: 10.5281/zenodo.7234361
 date-released: 2022-10-21
 url: "https://github.com/ElcoK/trails"
