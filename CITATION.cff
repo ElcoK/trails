@@ -1,12 +1,14 @@
-cff-version: 1.1.0
+cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 authors:
-  - family-names: Koks
-    given-names: Elco Eduard
-  - family-names: Dickens
-    given-names: Ben
-  - family-names: Russell
-    given-names: Tom
-title: ElcoK/trails: Trails v0.5
-version: v0.5
+- family-names: "Koks"
+  given-names: "Elco Eduard"
+- family-names: "Dickens"
+  given-names: "Ben"
+- family-names: "Russell"
+  given-names: "Tom"
+title: "Trade and tRAnsport Impact and fLow analysiS (TRAILS)"
+version: 0.5
+doi: 10.5281/zenodo.7234361
 date-released: 2022-10-21
+url: "https://github.com/ElcoK/trails"
