@@ -24,7 +24,7 @@ sys.path.append(os.path.join('..','src','trails'))
 
 from flow_model import *
 from simplify import *
-from damagescanner.vector import mainRoads,roads
+from damagescanner.vector import retrieve,roads
 
 
 pd.options.mode.chained_assignment = None  
@@ -620,9 +620,9 @@ def calculate_degree(network):
     ndC = len(network.nodes.index)
     if ndC-1 > max(network.edges.from_id) and ndC-1 > max(network.edges.to_id): print("Calculate_degree possibly unhappy")
     return np.bincount(network.edges['from_id'],None,ndC) + np.bincount(network.edges['to_id'],None,ndC)
-#Adds a degree column to the node dataframe 
+
 def add_degree(network):
-    """[summary]
+    """Adds a degree column to the node dataframe 
 
     Args:
         network (class): A network composed of nodes (points in space) and edges (lines)
@@ -797,9 +797,9 @@ def merge_edges(network, print_err=False):
             for x in pos_0_deg:
                 deg[x] = 0
             mode_edges = edg.loc[edg.id.isin(possibly_delete)]
-            edg.at[info_first_edge,optional_cols] = mode_edges[optional_cols].mode().iloc[0].values
+            edg.loc[info_first_edge,optional_cols] = mode_edges[optional_cols].mode().iloc[0].values
         else:
-            if print_err: print("Line", info_first_edge, "failed to merge, has shapely type ", pygeom.get_type_id(edg.at[info_first_edge,'geometry']))
+            if print_err: print("Line", info_first_edge, "failed to merge, has shapely type ", shapely.get_type_id(edg.at[info_first_edge,'geometry']))
 
         #pbar.update(1)
     

@@ -10,6 +10,7 @@ import igraph as ig
 from rasterstats import zonal_stats
 import subprocess
 import shutil
+import seaborn as sns
 
 from multiprocessing import Pool,cpu_count
 

@@ -7,22 +7,17 @@ import numpy as np
 
 import math
 import random
-import matplotlib.pyplot as plt
+import shapely
 import pandas as pd
-import geopandas as gpd
 
 from tqdm import tqdm
 from pathlib import Path
-from numpy import inf
 
 from population_OD import create_bbox,create_grid
 
 data_path = Path(__file__).resolve().parents[2].joinpath('data','percolation')
 
-from multiprocessing import Pool,cpu_count
-from itertools import repeat
-from functools import reduce 
-import operator
+from multiprocessing import Pool
 
 #import warnings
 #warnings.filterwarnings("ignore")
@@ -202,7 +197,7 @@ def prepare_possible_OD(gridDF, nodes, tolerance = 1):
     """    
 
     nodeIDs = []
-    sindex = pyg.STRtree(nodes['geometry'])
+    sindex = shapely.STRtree(nodes['geometry'])
 
     pos_OD_nodes = []
     pos_tot_pop = []
@@ -240,12 +235,12 @@ def nearest(geom, gdf,sindex, tolerance):
     """    
     matches_idx = sindex.query(geom)
     if not matches_idx.any():
-        buf = pyg.buffer(geom, tolerance)
+        buf = shapely.buffer(geom, tolerance)
         matches_idx = sindex.query(buf,'contains').tolist()
     try:
         nearest_geom = min(
             [gdf.iloc[match_idx] for match_idx in matches_idx],
-            key=lambda match: pyg.measurement.distance(match.geometry,geom)
+            key=lambda match: shapely.measurement.distance(match.geometry,geom)
         )
     except: 
         #print("Couldn't find node")
@@ -306,7 +301,7 @@ def reset_ids_network(edges, nodes):
 def get_metrics_and_split(x):
     
     # try:
-    data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
+    #data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
     #data_path = Path(r'C:/data/')
 
 
@@ -582,13 +577,11 @@ def percolation_random_attack(edges, run_no, country,del_frac=0.01, OD_list=[], 
         if frac_counter > 0.3 and frac_counter <= 0.5: del_frac = 0.02
         if frac_counter > 0.5: del_frac = 0.05
         exp_edge_no = exp_g.ecount()
-        #sample_probabilities = np.array(exp_g.es['distance'])/sum(exp_g.es['distance'])
 
         #The number of edges to delete
         no_edge_del = max(1,math.floor(del_frac * edge_no))
         try:
             edges_del = random.sample(range(exp_edge_no),no_edge_del)
-            #edges_del = np.random.choice(range(exp_edge_no), size=no_edge_del, replace = False, p=sample_probabilities)
         except:
             edges_del = range(exp_edge_no)
 
@@ -652,13 +645,13 @@ def percolation_random_attack_od_buffer(edges, nodes,grid_height, del_frac=0.01,
     else:
          node_pop = pop_list
 
-    buffer_centroids = pyg.buffer(nodes.loc[nodes.id.isin(OD_list)].geometry,grid_height*0.05).values
+    buffer_centroids = shapely.buffer(nodes.loc[nodes.id.isin(OD_list)].geometry,grid_height*0.05).values
 
     OD_buffers = dict(zip(OD_nodes,buffer_centroids))
 
     edges_per_OD = {}
     for OD_buffer in OD_buffers:
-        get_list_edges = list(edges.id.loc[pyg.intersects(pyg.make_valid(OD_buffers[OD_buffer]),pyg.make_valid(edges.geometry.values))].values)     
+        get_list_edges = list(edges.id.loc[shapely.intersects(shapely.make_valid(OD_buffers[OD_buffer]),shapely.make_valid(edges.geometry.values))].values)     
         edges_per_OD[OD_buffer] = get_list_edges,get_list_edges    
 
     #Creates a matrix of shortest path times between OD nodes
@@ -998,7 +991,7 @@ def percolation_local_attack(edges,df_grid, run_no, country, OD_list=[], pop_lis
         
         random_grid = df_grid.sample(n=1)
         
-        roads_to_remove = edges.loc[pyg.intersects(edges.geometry.values,random_grid.geometry.values)]
+        roads_to_remove = edges.loc[shapely.intersects(edges.geometry.values,random_grid.geometry.values)]
         overlap = list(set(roads_to_remove.id.values).intersection(set(edges_being_used)))
         
         df_grid = df_grid.drop(random_grid.index,axis=0)
@@ -1048,7 +1041,7 @@ def run_percolation_random_attack(country,run_no=200,od_buffer=False,parallel=Fa
         pd.concat(results) (pandas.DataFrame) : The results of the percolation
     """
 
-    data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
+    #data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
     #data_path = Path(r'C:/data/')
 
     network = '0'
@@ -1067,7 +1060,7 @@ def run_percolation_random_attack(country,run_no=200,od_buffer=False,parallel=Fa
         gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
         edges = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
         nodes = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
-        nodes.geometry = pyg.from_wkb(nodes.geometry)
+        nodes.geometry = shapely.from_wkb(nodes.geometry)
 
         edges.from_id = ['n_{}'.format(x) for x in edges.from_id]
         edges.to_id = ['n_{}'.format(x) for x in edges.to_id]
@@ -1097,7 +1090,7 @@ def run_percolation_random_attack(country,run_no=200,od_buffer=False,parallel=Fa
                     results.append(percolation_random_attack_od_buffer(edges,nodes,grid_height, 0.01, OD_nodes, populations,gdp))
         else:
 
-            nodes.geometry = pyg.to_wkb(nodes.geometry)
+            nodes.geometry = shapely.to_wkb(nodes.geometry)
                             
             edges_list = []
             nodes_list = []
@@ -1149,13 +1142,11 @@ def run_percolation_local_attack(country,run_no=1,grid_size=0.1,parallel=True):
         pd.concat(results) (pandas.DataFrame) : The results of the percolation
     """
 
-    data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
+    #data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
     #data_path = Path(r'C:/data/')
     network = '0'
 
     try:
-
-
         if data_path.joinpath('percolation_results_local_attack_{}_revised'.format(str(grid_size).replace('.','')),'{}_{}_results.csv'.format(country,network)).is_file():
             print("{} {} already finished!".format(country,network))           
             return None
@@ -1166,7 +1157,7 @@ def run_percolation_local_attack(country,run_no=1,grid_size=0.1,parallel=True):
         gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
         edges = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
         nodes = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
-        nodes.geometry = pyg.from_wkb(nodes.geometry)
+        nodes.geometry = shapely.from_wkb(nodes.geometry)
 
         print('data loaded for {}'.format(country))
 
@@ -1191,11 +1182,11 @@ def run_percolation_local_attack(country,run_no=1,grid_size=0.1,parallel=True):
         results = []
 
         # create grid and determine total_runs
-        edges.geometry = pyg.from_wkb(edges.geometry)
+        edges.geometry = shapely.from_wkb(edges.geometry)
         bbox = create_bbox(edges)
 
         df_grid = pd.DataFrame(create_grid(bbox,grid_size),columns=['geometry'])
-        df_grid = df_grid.loc[pyg.intersects(df_grid.geometry.values,pyg.convex_hull(pyg.multilinestrings(edges.geometry.values)))].reset_index(drop=True)
+        df_grid = df_grid.loc[shapely.intersects(df_grid.geometry.values,shapely.convex_hull(shapely.multilinestrings(edges.geometry.values)))].reset_index(drop=True)
         
         print('grid created for {}'.format(country))
 
@@ -1245,7 +1236,7 @@ def run_percolation_targeted_attack(country,run_no=10,parallel=True):
         pd.concat(results) (pandas.DataFrame) : The results of the percolation
     """
 
-    data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
+    #data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
     #data_path = Path(r'C:/data/')
 
     #get all networks for a country
@@ -1266,7 +1257,7 @@ def run_percolation_targeted_attack(country,run_no=10,parallel=True):
         gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
         edges = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
         nodes = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
-        nodes.geometry = pyg.from_wkb(nodes.geometry)
+        nodes.geometry = shapely.from_wkb(nodes.geometry)
 
         edges.from_id = ['n_{}'.format(x) for x in edges.from_id]
         edges.to_id = ['n_{}'.format(x) for x in edges.to_id]
@@ -1339,8 +1330,7 @@ def run_random_attack_percolations(country):
 
     # random attack
     run_percolation_random_attack(country,run_no=200,od_buffer=False,parallel=True)
-    run_percolation_random_attack(country,run_no=200,od_buffer=True,parallel=True)
-
+   
 def run_local_targeted_attack_percolations(country):
 
     # local attack
@@ -1353,8 +1343,8 @@ def run_local_targeted_attack_percolations(country):
 
 if __name__ == '__main__':     
 
-    data_path = Path("/scistor/ivm/data_catalogue/open_street_map")
-    #data_path = Path(r'C:/data/')
+    #data_path = Path("/scistor/ivm/data_catalogue/open_street_map")
+    data_path = Path(r'C:/data/Global_Percolation')
 
     to_ignore = ['ICA', 'SPM', 'XPI', 'SJM', 'ALA', 'TUV', 'PCN', 'XNC', 'IOT', 'ATF', 'XCA', # initial list, below are the ones smaller than 100 nodes
     'GRL', 'GRD', 'SLB', 'FLK', 'MSR', 'NFK', 'VCT', 'VUT', 'TCA', 'NRU', 'WSM', 'VGB', 'VAT', 
@@ -1364,11 +1354,6 @@ if __name__ == '__main__':
     sorted_files = sorted(all_files, key = os.path.getsize) 
     countries = [y.name[:3] for y in sorted_files]
     
-    fin_countries =  [y.name[:3] for y in data_path.joinpath('percolation_results_local_attack_005_revised').iterdir()][::-1]
-
-    countries = list(set(countries)-set(fin_countries)-set(to_ignore))
-
-    print(countries)
 
     country = sys.argv[1]
     # # #print(countries[int(sys.argv[1]]))
@@ -1382,7 +1367,7 @@ if __name__ == '__main__':
     #run_random_attack_percolations('AND')
 
     # for country in countries:
-    run_local_targeted_attack_percolations(country)   
+    run_random_attack_percolations(country)   
     #run_random_attack_percolations(country)    
 
 
