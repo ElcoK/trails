@@ -1,11 +1,19 @@
+import os,sys
+
+os.environ['USE_PYGEOS'] = '0'
+
 import igraph as ig
 import numpy as np
+
 import math
 import random
+import matplotlib.pyplot as plt
 import pandas as pd
-import pygeos as pyg
+import geopandas as gpd
+
 from tqdm import tqdm
 from pathlib import Path
+from numpy import inf
 
 from population_OD import create_bbox,create_grid
 
@@ -13,6 +21,8 @@ data_path = Path(__file__).resolve().parents[2].joinpath('data','percolation')
 
 from multiprocessing import Pool,cpu_count
 from itertools import repeat
+from functools import reduce 
+import operator
 
 #import warnings
 #warnings.filterwarnings("ignore")
@@ -25,8 +35,19 @@ def metrics(graph):
     Returns:
         m: 
     """    
-    g = graph
-    return pd.DataFrame([[g.ecount(),g.vcount(),g.density(),g.omega(),g.average_path_length(directed=False),g.assortativity_degree(False),g.diameter(directed=False),g.edge_connectivity(),g.maxdegree(),np.sum(g.es['distance'])]],columns=["Edge_No","Node_No","Density","Clique_No", "Ave_Path_Length", "Assortativity","Diameter","Edge_Connectivity","Max_Degree","Total_Edge_Length"])
+    return pd.DataFrame([[graph.ecount(),
+    graph.vcount(),
+    graph.density(),
+    graph.omega(),
+    graph.average_path_length(directed=False),
+    graph.assortativity_degree(False),
+    graph.diameter(directed=False),
+    graph.edge_connectivity(),
+    graph.maxdegree(),
+    graph.transitivity_undirected(),
+    len(graph.articulation_points()),
+    np.sum(graph.es['distance'])]],
+    columns=["Edge_No","Node_No","Density","Clique_No", "Ave_Path_Length", "Assortativity","Diameter","Edge_Connectivity","Max_Degree","Transivitity","Articulation_Points","Total_Edge_Length"])
 
 
 def metrics_Print(graph):
@@ -38,6 +59,7 @@ def metrics_Print(graph):
         m: 
     """    
     g = graph
+    m = []
     print("Number of edges: ", g.ecount())
     print("Number of nodes: ", g.vcount())
     print("Density: ", g.density())
@@ -47,6 +69,8 @@ def metrics_Print(graph):
     print("Diameter: ",g.diameter(directed=False))
     print("Edge Connectivity: ", g.edge_connectivity())
     print("Maximum degree: ", g.maxdegree())
+    print("Transivitity: ", g.transitivity_local_undirected(weight='time'))
+    print("Articulation Points: ", len(g.articulation_points()))    
     print("Total Edge length ", np.sum(g.es['distance']))
 
 #Creates a graph 
@@ -59,7 +83,6 @@ def graph_load(edges):
     Returns:
         igraph.Graph (object) : a graph with distance and time attributes
     """    
-    #return ig.Graph.TupleList(gdfNet.edges[['from_id','to_id','distance']].itertuples(index=False),edge_attrs=['distance'])
     edges = edges.reindex(['from_id','to_id'] + [x for x in list(edges.columns) if x not in ['from_id','to_id']],axis=1)
     graph = ig.Graph.TupleList(edges.itertuples(index=False), edge_attrs=list(edges.columns)[2:],directed=False)
     graph.vs['id'] = graph.vs['name']
@@ -149,13 +172,17 @@ def choose_OD(pos_OD, OD_no):
 
     #creates 2 tuples of the node ids and their total representative population
     node_ids, tot_pops = zip(*pos_OD)
+   
     #Assigns a probability by population size
     pop_probs = [x/sum(tot_pops) for x in tot_pops]
+
     #OD nodes chosen
     OD_nodes = list(np.random.choice(node_ids, size=OD_no, replace = False, p=pop_probs))
+
     #Population counts in a mapped list
     node_positions = [node_ids.index(i) for i in OD_nodes]
     mapped_pops = [tot_pops[j] for j in node_positions]
+
     #returns the nodes, and their populations, should this be zipped?
     return OD_nodes, mapped_pops
 
@@ -174,6 +201,7 @@ def prepare_possible_OD(gridDF, nodes, tolerance = 1):
         final_possible_pop (list): a list of tuples representing the nodes and their population
     """    
 
+    nodeIDs = []
     sindex = pyg.STRtree(nodes['geometry'])
 
     pos_OD_nodes = []
@@ -186,6 +214,7 @@ def prepare_possible_OD(gridDF, nodes, tolerance = 1):
             pos_OD_nodes.append(ID)
             pos_tot_pop.append(i.tot_pop)
             
+    a = nodes.loc[nodes.id.isin(pos_OD_nodes)]
     #Create a geopackage of the possible ODs
     #with Geopackage('nodyBGR.gpkg', 'w') as out:
     #    out.add_layer(a, name='finanod', crs='EPSG:4326')
@@ -276,65 +305,45 @@ def reset_ids_network(edges, nodes):
 
 def get_metrics_and_split(x):
     
-    try:
-        #data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
-        data_path = Path(r'C:/data/')
+    # try:
+    data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
+    #data_path = Path(r'C:/data/')
 
 
-        if data_path.joinpath("percolation_metrics","{}_0_metrics.csv".format(x)).is_file():
-            print("{} already finished!".format(x))           
-            return None
+    if data_path.joinpath("percolation_metrics","{}_0_metrics.csv".format(x)).is_file():
+        print("{} already finished!".format(x))           
+        return None
 
-        print(x+' has started!')
-        edges = pd.read_feather(data_path.joinpath("road_networks","{}-edges.feather".format(x)))
-        nodes = pd.read_feather(data_path.joinpath("road_networks","{}-nodes.feather".format(x)))
+    print(x+' has started!')
+    edges = pd.read_feather(data_path.joinpath("road_networks","{}-edges.feather".format(x)))
+    nodes = pd.read_feather(data_path.joinpath("road_networks","{}-nodes.feather".format(x)))
 
-        #edges = edges.drop('geometry',axis=1)
-        edges = edges.reindex(['from_id','to_id'] + [x for x in list(edges.columns) if x not in ['from_id','to_id']],axis=1)
-        graph= ig.Graph.TupleList(edges.itertuples(index=False), edge_attrs=list(edges.columns)[2:],directed=False)
-        graph.vs['id'] = graph.vs['name']
+    #edges = edges.drop('geometry',axis=1)
+    edges = edges.reindex(['from_id','to_id'] + [x for x in list(edges.columns) if x not in ['from_id','to_id']],axis=1)
+    graph= ig.Graph.TupleList(edges.itertuples(index=False), edge_attrs=list(edges.columns)[2:],directed=False)
+    graph.vs['id'] = graph.vs['name']
 
-        #all_df = metrics(graph)
-        #all_df.to_csv(data_path.joinpath("percolation_metrics","{}_all_metrics.csv".format(x)))
+    #all_df = metrics(graph)
+    #all_df.to_csv(data_path.joinpath("percolation_metrics","{}_all_metrics.csv".format(x)))
 
-        cluster_sizes = graph.clusters().sizes()
-        cluster_sizes.sort(reverse=True) 
-        cluster_loc = [graph.clusters().sizes().index(x) for x in cluster_sizes[:5]]
+    cluster_sizes = graph.clusters().sizes()
+    cluster_sizes.sort(reverse=True) 
+    cluster_loc = [graph.clusters().sizes().index(x) for x in cluster_sizes[:5]]
 
-        main_cluster = graph.clusters().giant()
-        main_edges = edges.loc[edges.id.isin(main_cluster.es()['id'])]
-        main_nodes = nodes.loc[nodes.id.isin(main_cluster.vs()['id'])]
-        main_edges, main_nodes = reset_ids_network(main_edges,main_nodes)
-        main_edges.to_feather(data_path.joinpath("percolation_networks","{}_0-edges.feather".format(x)))
-        main_nodes.to_feather(data_path.joinpath("percolation_networks","{}_0-nodes.feather".format(x)))
-        main_df = metrics(main_cluster)
-        main_df.to_csv(data_path.joinpath("percolation_metrics","{}_0_metrics.csv".format(x)))        
-        skipped_giant = False
+    main_cluster = graph.clusters().giant()
+    main_edges = edges.loc[edges.id.isin(main_cluster.es()['id'])]
+    main_nodes = nodes.loc[nodes.id.isin(main_cluster.vs()['id'])]
+    main_edges, main_nodes = reset_ids_network(main_edges,main_nodes)
+    main_edges.to_feather(data_path.joinpath("percolation_networks","{}_0-edges.feather".format(x)))
+    main_nodes.to_feather(data_path.joinpath("percolation_networks","{}_0-nodes.feather".format(x)))
+    print(x+' start metrics!')
 
-        counter = 1
-        for y in cluster_loc:
-            if not skipped_giant:
-                skipped_giant=True
-                continue
-            if len(graph.clusters().subgraph(y).vs) < 500:
-                break
-            g = graph.clusters().subgraph(y)
-            g_edges = edges.loc[edges.id.isin(g.es()['id'])]
-            g_nodes = nodes.loc[nodes.id.isin(g.vs()['id'])]
-            if len(g_edges) == len(main_edges) & len(g_nodes) == len(main_nodes):
-                continue
-            g_edges, g_nodes = reset_ids_network(g_edges,g_nodes)
-            g_edges.to_feather(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(x,str(counter))))
-            g_nodes.to_feather(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(x,str(counter))))
-            g_df = metrics(g)
-            g_df.to_csv("/scistor/ivm/data_catalogue/open_street_map/percolation_metrics/"+x+"_"+str(counter)+"_metrics.csv")
-            counter += 1
-        print(x+' has finished!')
+    main_df = metrics(main_cluster)
+    main_df.to_csv(data_path.joinpath("percolation_metrics","{}_0_metrics.csv".format(x)))        
+    print(x+' has finished!')
 
-    except Exception as e: 
-        print(x+" failed because of {}".format(e))
 
-def run_shortest_paths(graph,OD_nodes,weighting='time',output='time'):
+def run_shortest_paths(graph,OD_nodes,weighting='time'):
     
     collect_all_values = []
     for x in (range(len(OD_nodes))):
@@ -343,7 +352,7 @@ def run_shortest_paths(graph,OD_nodes,weighting='time',output='time'):
         collect_value = []
         for path in get_paths:
             if len(path) == 0:
-                collect_value.append(0)
+                collect_value.append(0.0)
             else:
                 collect_value.append(sum(graph.es[path]['time']))
 
@@ -351,12 +360,63 @@ def run_shortest_paths(graph,OD_nodes,weighting='time',output='time'):
 
     return np.matrix(collect_all_values)
 
+def run_shortest_paths_speedup(graph,OD_nodes,weighting='time'):
+    
+    OD_nodes_sp = OD_nodes.copy()
+
+    collect_all_values = []
+    for x in (range(len(OD_nodes))):
+        get_paths = graph.get_shortest_paths(OD_nodes_sp[0],OD_nodes_sp,weights=weighting,output='epath')
+
+        collect_value = []
+        for path in get_paths:
+            if len(path) == 0:
+                collect_value.append(0.0)
+            else:
+                collect_value.append(sum(graph.es[path]['time']))
+
+        del OD_nodes_sp[0]
+        collect_all_values.append(np.concatenate((np.zeros(x),np.array(collect_value))))
+    
+    # make a full matrix by mirroring the triangle
+    X = collect_all_values.copy()
+    X = np.triu(X)
+    X = X + X.T - np.diag(np.diag(X))
+        
+    return np.matrix(X)
+
+def run_shortest_paths_specific(graph,OD_nodes,trips_to_proceed,default_trips,weighting='time'):
+
+
+    accounting_matrix = np.zeros((len(OD_nodes),len(OD_nodes)))
+    collect_all_values = np.zeros((len(OD_nodes),len(OD_nodes)))
+    for x in (range(len(OD_nodes))):
+        for y in (range(len(OD_nodes))):
+            if accounting_matrix[y,x] == 1:
+                collect_all_values[x,y] = collect_all_values[y,x]
+                continue
+
+            if trips_to_proceed[x,y]:
+                path = graph.get_shortest_paths(OD_nodes[x],OD_nodes[y],weights=weighting,output='epath')[0]
+                if len(path) == 0:
+                    collect_all_values[x,y] = 0
+                else:
+                    collect_all_values[x,y] = sum(graph.es[path]['time'])
+            else:
+                collect_all_values[x,y] = default_trips[x,y]
+            
+            accounting_matrix[x,y] = 1
+
+    return np.matrix(collect_all_values)
+
+
 def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,distance_disruption, time_disruption):
     """Function returns the % of total trips between origins and destinations that exceed fail value
        Almost verbatim from world bank /GOSTnets world_files_criticality_v2.py
 
     Args:
         OD (np.matrix): Current OD matrix times (during percolation)
+        fail_value (int): Came form GOSTNETS , seems just to be a huge int
         demand (np.ndarray): Demand matrix
         baseline (np.matrix): OD matrix before percolation
         GDP_per_capita (int): GDP of relevant area
@@ -458,10 +518,11 @@ def SummariseOD(OD, fail_value, demand, baseline, GDP_per_capita, frac_counter,d
     total_surp_loss_e1, total_pct_surplus_loss_e1 = surplus_loss(-0.15, adj_cost, baseline_cost, demand)
     total_surp_loss_e2, total_pct_surplus_loss_e2 = surplus_loss(-0.36, adj_cost, baseline_cost, demand)
 
+
     return frac_counter, pct_isolated, pct_unaffected, pct_delayed, average_time_disruption, total_surp_loss_e1, total_pct_surplus_loss_e1, total_surp_loss_e2, total_pct_surplus_loss_e2, distance_disruption, time_disruption, unaffected_percentiles, delayed_percentiles
 
 
-def percolation_random_attack(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP_per_capita=50000):
+def percolation_random_attack(edges, run_no, country,del_frac=0.01, OD_list=[], pop_list=[], GDP_per_capita=50000):
     """Final version of percolation, runs a simulation on the network provided, to give an indication of network resilience.
 
     Args:
@@ -474,8 +535,8 @@ def percolation_random_attack(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP
     Returns:
         result_df [pandas.DataFrame]: The results! 'frac_counter', 'pct_isolated', 'average_time_disruption', 'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','total_surp_loss_e1', 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2'    """    
     
-    edges.geometry = pyg.from_wkb(edges.geometry)
-
+    #edges.geometry = pyg.from_wkb(edges.geometry)
+    print('random attack sample {} started for {}'.format(run_no,country))
     result_df = []
     g = graph_load(edges)
     #These if statements allow for an OD and population list to be randomly generated
@@ -492,7 +553,7 @@ def percolation_random_attack(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP
          node_pop = pop_list
 
     #Creates a matrix of shortest path times between OD nodes
-    OD_orig = run_shortest_paths(g,OD_nodes,weighting='time',output='time')
+    OD_orig = run_shortest_paths_speedup(g,OD_nodes,weighting='time')
     
     #check which edges are actually being used
     get_paths = []
@@ -503,6 +564,7 @@ def percolation_random_attack(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP
     for path in get_paths:
             get_all_path_edges.append(path)  
             
+
     demand = create_demand(OD_nodes, OD_orig, node_pop)
     exp_g = g.copy()
     trips_possible = True
@@ -537,7 +599,7 @@ def percolation_random_attack(edges, del_frac=0.01, OD_list=[], pop_list=[], GDP
         cur_dis_time = 1 - (np.sum(exp_g.es['time'])/tot_edge_time)
         
         #get new matrix
-        perc_matrix = run_shortest_paths(exp_g,OD_nodes,weighting='time',output='time')
+        perc_matrix = run_shortest_paths_speedup(exp_g,OD_nodes,weighting='time')
         np.fill_diagonal(perc_matrix, np.nan)
         perc_matrix[perc_matrix == 0] = 99999999999
 
@@ -571,8 +633,8 @@ def percolation_random_attack_od_buffer(edges, nodes,grid_height, del_frac=0.01,
     Returns:
         result_df [pandas.DataFrame]: The results! 'frac_counter', 'pct_isolated', 'average_time_disruption', 'pct_thirty_plus', 'pct_twice_plus', 'pct_thrice_plus','total_surp_loss_e1', 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2'    """    
 
-    nodes.geometry = pyg.from_wkb(nodes.geometry)
-    edges.geometry = pyg.from_wkb(edges.geometry)
+    # nodes.geometry = pyg.from_wkb(nodes.geometry)
+    # edges.geometry = pyg.from_wkb(edges.geometry)
 
     result_df = []
     g = graph_load(edges)
@@ -600,14 +662,18 @@ def percolation_random_attack_od_buffer(edges, nodes,grid_height, del_frac=0.01,
         edges_per_OD[OD_buffer] = get_list_edges,get_list_edges    
 
     #Creates a matrix of shortest path times between OD nodes
-    OD_orig = run_shortest_paths(g,OD_nodes,weighting='time',output='time')
+    OD_orig = run_shortest_paths_speedup(g,OD_nodes,weighting='time')
+    OD_thresh = OD_orig * 10
+    
 
     demand = create_demand(OD_nodes, OD_orig, node_pop)
     exp_g = g.copy()
     trips_possible = True
+
     frac_counter = 0 
     tot_edge_length = np.sum(g.es['distance'])
     tot_edge_time = np.sum(g.es['time'])
+
 
     # add frac 0.00 for better figures and results
     result_df.append((0.00, 0, 100, 0, 0.0, 0, 0.0, 0, 0.0, 0.0, 0.0, 
@@ -627,7 +693,6 @@ def percolation_random_attack_od_buffer(edges, nodes,grid_height, del_frac=0.01,
 
         try:
             edges_del = random.sample(range(exp_edge_no),no_edge_del)
-            #edges_del = np.random.choice(range(exp_edge_no), size=no_edge_del, replace = False, p=sample_probabilities)
         except:
             edges_del = range(exp_edge_no)
 
@@ -676,7 +741,7 @@ def percolation_random_attack_od_buffer(edges, nodes,grid_height, del_frac=0.01,
         cur_dis_time = 1 - (np.sum(exp_g.es['time'])/tot_edge_time)
 
         #get new matrix
-        perc_matrix = run_shortest_paths(exp_g,OD_nodes,weighting='time',output='time')
+        perc_matrix = run_shortest_paths_speedup(exp_g,OD_nodes,weighting='time')
         np.fill_diagonal(perc_matrix, np.nan)
         perc_matrix[perc_matrix == 0] = 99999999999
 
@@ -715,6 +780,7 @@ def percolation_targeted_attack(edges,country,network,OD_list=[], pop_list=[], G
         OD_nodes = random.sample(range(g.vcount()-1),100)
     else: 
         OD_nodes = OD_list
+    edge_no = g.ecount() 
     OD_node_no = len(OD_nodes)
 
     if pop_list == []: 
@@ -723,7 +789,9 @@ def percolation_targeted_attack(edges,country,network,OD_list=[], pop_list=[], G
          node_pop = pop_list
 
     #Creates a matrix of shortest path times between OD nodes
-    OD_orig = run_shortest_paths(g,OD_nodes,weighting='time',output='time')
+    OD_orig = run_shortest_paths_speedup(g,OD_nodes,weighting='time')
+    OD_thresh = OD_orig * 10
+         
     demand = create_demand(OD_nodes, OD_orig, node_pop)
     exp_g = g.copy()
 
@@ -740,7 +808,7 @@ def percolation_targeted_attack(edges,country,network,OD_list=[], pop_list=[], G
         cur_dis_time = 1 - (np.sum(exp_g.es['time'])/tot_edge_time)
         
         #get new matrix
-        perc_matrix = run_shortest_paths(exp_g,OD_nodes,weighting='time',output='time')
+        perc_matrix = run_shortest_paths_speedup(exp_g,OD_nodes,weighting='time')
         np.fill_diagonal(perc_matrix, np.nan)
         perc_matrix[perc_matrix == 0] = 99999999999
 
@@ -755,7 +823,7 @@ def percolation_targeted_attack(edges,country,network,OD_list=[], pop_list=[], G
     result_df = result_df.replace('--',0)
     return result_df
 
-def percolation_targeted_attack_speedup(edges,country,network,OD_list=[], pop_list=[], GDP_per_capita=50000):
+def percolation_targeted_attack_speedup(edges,edge_sublist,run_no,country,network,OD_list=[], pop_list=[], GDP_per_capita=50000):
     """Final version of percolation, runs a simulation on the network provided, to give an indication of network resilience.
 
     Args:
@@ -771,11 +839,14 @@ def percolation_targeted_attack_speedup(edges,country,network,OD_list=[], pop_li
     result_df = []
     g = graph_load(edges)
 
+
     #These if statements allow for an OD and population list to be randomly generated
     if OD_list == []: 
         OD_nodes = random.sample(range(g.vcount()-1),100)
     else: 
         OD_nodes = OD_list
+    edge_no = g.ecount() 
+
     OD_node_no = len(OD_nodes)
 
     if pop_list == []: 
@@ -784,7 +855,8 @@ def percolation_targeted_attack_speedup(edges,country,network,OD_list=[], pop_li
          node_pop = pop_list
 
     #Creates a matrix of shortest path times between OD nodes
-    OD_orig = run_shortest_paths(g,OD_nodes,weighting='time',output='time')
+    OD_orig = run_shortest_paths_speedup(g,OD_nodes,weighting='time')
+    OD_thresh = OD_orig * 10
     
     #check which edges are actually being used
     get_paths = []
@@ -793,28 +865,41 @@ def percolation_targeted_attack_speedup(edges,country,network,OD_list=[], pop_li
 
     get_all_path_edges = []
     for path in get_paths:
-            get_all_path_edges.append(path)  
-            
+        path = [x for x in path if len(x) > 0]
+        #print(path)
+        get_all_path_edges.append((path))  
+
+    all_paths_all_nodes = np.zeros((OD_node_no,OD_node_no,10000),dtype='int')
+
+    #create dict of edges per node
+    for x in range(len(OD_nodes)):
+        for y in range(len(OD_nodes)):
+            all_paths_all_nodes[x,y] = np.concatenate((get_paths[y][x],np.zeros((10000-len(get_paths[y][x])),dtype='int')))
+
     edges_being_used = np.unique([item for sublist in [item for sublist in get_all_path_edges for item in sublist] for item in sublist])   
+    edges_being_used = list(set(edges_being_used).intersection(set(edge_sublist.id.values)))
 
+    #print('initial OD created')
 
+    # prepare further analysis
     demand = create_demand(OD_nodes, OD_orig, node_pop)
     exp_g = g.copy()
 
     tot_edge_length = np.sum(g.es['distance'])
     tot_edge_time = np.sum(g.es['time'])
 
-    exp_edge_no = g.ecount()
 
-    for edge in tqdm(range(exp_edge_no),total=exp_edge_no,desc='percolation for {} {}'.format(country,network)):
+    for edge in tqdm(edges_being_used,total=len(edges_being_used),desc='targeted attack part {} for {}'.format(run_no,country)):
 
-        if g.es[edge]['id'] not in edges_being_used:
+        edge_id = g.es[edge]['id']
 
-            result_df.append((g.es[edge]['id'], 0, 100, 0, 0.0, 0, 0.0, 0, 0.0, 0.0, 0.0, 
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 
-                [0.0,0.0, 0.0, 0.0, 0.0, 0.0]))
-            continue
-
+        # collect only possible trips
+        trips_to_proceed = np.zeros((100,100))
+        for x in range(len(OD_nodes)):
+            for y in range(len(OD_nodes)):
+                if len(all_paths_all_nodes[x,y,:][np.in1d(all_paths_all_nodes[x,y,:],[edge_id],assume_unique=True)]) > 0:
+                    trips_to_proceed[x,y] = 1
+            
         exp_g = g.copy()
         exp_g.delete_edges(edge)
         
@@ -822,12 +907,14 @@ def percolation_targeted_attack_speedup(edges,country,network,OD_list=[], pop_li
         cur_dis_time = 1 - (np.sum(exp_g.es['time'])/tot_edge_time)
 
         #get new matrix
-        perc_matrix = run_shortest_paths(exp_g,OD_nodes,weighting='time',output='time')
+        perc_matrix = run_shortest_paths_specific(exp_g,OD_nodes,trips_to_proceed,OD_orig,weighting='time')
+        #perc_matrix = run_shortest_paths_speedup(exp_g,OD_nodes,weighting='time')
+
         np.fill_diagonal(perc_matrix, np.nan)
         perc_matrix[perc_matrix == 0] = 99999999999
 
         results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,g.es[edge]['id'],cur_dis_length,cur_dis_time) 
-         
+        
         result_df.append(results)
 
     result_df = pd.DataFrame(result_df, columns=['edge_no', 'pct_isolated','pct_unaffected', 'pct_delayed',
@@ -835,10 +922,11 @@ def percolation_targeted_attack_speedup(edges,country,network,OD_list=[], pop_li
                                                 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2',
                                                 'distance_disruption','time_disruption','unaffected_percentiles','delayed_percentiles'])
     result_df = result_df.replace('--',0)
+
     return result_df
 
 
-def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_capita=50000):
+def percolation_local_attack(edges,df_grid, run_no, country, OD_list=[], pop_list=[], GDP_per_capita=50000):
     """Final version of percolation, runs a simulation on the network provided, to give an indication of network resilience.
 
     Args:
@@ -857,12 +945,13 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
 
     # load graph
     g = graph_load(edges)
-
+    
     #These if statements allow for an OD and population list to be randomly generated
     if OD_list == []: 
         OD_nodes = random.sample(range(g.vcount()-1),100)
     else: 
         OD_nodes = OD_list
+
     OD_node_no = len(OD_nodes)
 
     if pop_list == []: 
@@ -871,8 +960,8 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
          node_pop = pop_list
 
     #Creates a matrix of shortest path times between OD nodes
-    OD_orig = run_shortest_paths(g,OD_nodes,weighting='time',output='time')
-   
+    OD_orig = run_shortest_paths_speedup(g,OD_nodes,weighting='time')
+    
     #check which edges are actually being used
     get_paths = []
     for x in (range(len(OD_nodes))):
@@ -880,9 +969,22 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
 
     get_all_path_edges = []
     for path in get_paths:
-            get_all_path_edges.append(path)  
-            
+        path = [x for x in path if len(x) > 0]
+        #print(path)
+        get_all_path_edges.append((path))  
+       
+
+    all_paths_all_nodes = np.zeros((100,100,10000),dtype='int')
+    #create dict of edges per node
+    get_all_path_edges_per_node = {}
+    for x in range(len(OD_nodes)):
+        for y in range(len(OD_nodes)):
+            get_all_path_edges_per_node[OD_nodes[x],OD_nodes[y]] = get_paths[y][x]
+            all_paths_all_nodes[x,y] = np.concatenate((get_paths[y][x],np.zeros((10000-len(get_paths[y][x])),dtype='int')))
+
     edges_being_used = np.unique([item for sublist in [item for sublist in get_all_path_edges for item in sublist] for item in sublist])   
+
+    #print('initial OD created')
 
     # prepare further analysis
     demand = create_demand(OD_nodes, OD_orig, node_pop)
@@ -890,21 +992,27 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
     tot_edge_length = np.sum(g.es['distance'])
     tot_edge_time = np.sum(g.es['time'])
 
-    k = 0
-
-    while k < total_runs:
-
+    for k in tqdm(range(total_runs),total=total_runs,desc='local attack part {} for {}'.format(run_no,country)):
         if len(df_grid) == 0:
             break
         
         random_grid = df_grid.sample(n=1)
-        roads_to_remove = edges.loc[pyg.intersects(edges.geometry.values,random_grid.geometry.values)]
-        df_grid = df_grid.drop(random_grid.index,axis=0)
         
-        overlap = len(set(roads_to_remove.id.values).intersection(set(edges_being_used)))
-        if (len(roads_to_remove) == 0) | (overlap == 0):
-            continue    
+        roads_to_remove = edges.loc[pyg.intersects(edges.geometry.values,random_grid.geometry.values)]
+        overlap = list(set(roads_to_remove.id.values).intersection(set(edges_being_used)))
+        
+        df_grid = df_grid.drop(random_grid.index,axis=0)
+
+        if (len(roads_to_remove) == 0) | (len(overlap) == 0):
+            continue   
         else:
+            # collect only possible trips
+            trips_to_proceed = np.zeros(OD_orig.shape)
+            for x in range(len(OD_nodes)):
+                for y in range(len(OD_nodes)):
+                    if len(all_paths_all_nodes[x,y,:][np.in1d(all_paths_all_nodes[x,y,:],overlap,assume_unique=True)]) > 0:
+                        trips_to_proceed[x,y] = 1
+                
             exp_g = g.copy()
             exp_g.delete_edges(roads_to_remove.index)
             k += 1          
@@ -912,10 +1020,10 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
             cur_dis_time = 1 - (np.sum(exp_g.es['time'])/tot_edge_time)
 
             #get new matrix
-            perc_matrix = run_shortest_paths(exp_g,OD_nodes,weighting='time',output='time')
+            perc_matrix = run_shortest_paths_specific(exp_g,OD_nodes,trips_to_proceed,OD_orig,weighting='time')
+            #perc_matrix = run_shortest_paths_speedup(exp_g,OD_nodes,weighting='time')
             np.fill_diagonal(perc_matrix, np.nan)
             perc_matrix[perc_matrix == 0] = 99999999999
-            
             results = SummariseOD(perc_matrix, 99999999999, demand, OD_orig, GDP_per_capita,random_grid.index.values[0],cur_dis_length,cur_dis_time) 
             
             result_df.append(results)
@@ -926,6 +1034,7 @@ def percolation_local_attack(edges,df_grid, OD_list=[], pop_list=[], GDP_per_cap
                                                 'total_pct_surplus_loss_e1', 'total_surp_loss_e2', 'total_pct_surplus_loss_e2',
                                                 'distance_disruption','time_disruption','unaffected_percentiles','delayed_percentiles'])
     result_df = result_df.replace('--',0)
+
     return result_df
 
 def run_percolation_random_attack(country,run_no=200,od_buffer=False,parallel=False):
@@ -942,104 +1051,94 @@ def run_percolation_random_attack(country,run_no=200,od_buffer=False,parallel=Fa
     data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
     #data_path = Path(r'C:/data/')
 
-    #get all networks for a country
-    get_all_networks = [y.name[4] for y in data_path.joinpath("percolation_networks").iterdir() if (y.name.startswith(country) & y.name.endswith('-edges.feather'))]
-
-    for network in get_all_networks:
+    network = '0'
+    #'for network in get_all_networks:
     
-        try:
-            if not od_buffer:
-                if data_path.joinpath('percolation_results_random_attack_regular','{}_{}_results.csv'.format(country,network)).is_file():
-                    print("{} {} already finished!".format(country,network))           
-                    continue
+    try:
+    #     if not od_buffer:
+        if data_path.joinpath('percolation_results_random_attack_regular_revised','{}_{}_results.csv'.format(country,network)).is_file():
+            print("{} {} already finished!".format(country,network))           
+            return None
+        else:
+            print("Random attack started for {} {}!".format(country,network))  
+    
+
+        all_gdp = pd.read_csv(open(data_path.joinpath("percolation_input_data","worldbank_gdp_2019.csv")),error_bad_lines=False)
+        gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
+        edges = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
+        nodes = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
+        nodes.geometry = pyg.from_wkb(nodes.geometry)
+
+        edges.from_id = ['n_{}'.format(x) for x in edges.from_id]
+        edges.to_id = ['n_{}'.format(x) for x in edges.to_id]
+        nodes.id = ['n_{}'.format(x) for x in nodes.id]
+
+        # Each country has a set of centroids of grid cells with populations for each cell
+        possibleOD = pd.read_csv(open(data_path.joinpath("network_OD_points_revised","{}.csv".format(country,network))))
+        grid_height = possibleOD.grid_height.iloc[2]
+
+        seed = sum(map(ord,country))
+        random.seed(seed)
+        np.random.seed(seed)
+
+        # OD_pos = prepare_possible_OD(possibleOD, nodes, h)
+
+        df_OD_pos = pd.read_csv(open(data_path.joinpath("OD_pos_revised","{}.csv".format(country))))
+        OD_pos = list(zip(df_OD_pos.node_id.values,df_OD_pos.population.values))
+        OD_no = min(len(OD_pos),100)
+        results = []
+
+        if not parallel:
+            for x in tqdm(range(run_no),total=run_no,desc='percolation for '+country+' '+network):
+                OD_nodes, populations = choose_OD(OD_pos, OD_no)
+                if not od_buffer:
+                    results.append(percolation_random_attack(edges, 0.01, OD_nodes, populations,gdp))
                 else:
-                    print("Random attack started for {} {}!".format(country,network))  
+                    results.append(percolation_random_attack_od_buffer(edges,nodes,grid_height, 0.01, OD_nodes, populations,gdp))
+        else:
 
-            else:
-                if data_path.joinpath('percolation_results_random_attack_od_buffer','{}_{}_results.csv'.format(country,network)).is_file():
-                    print("{} {} already finished!".format(country,network))           
-                    continue                          
+            nodes.geometry = pyg.to_wkb(nodes.geometry)
+                            
+            edges_list = []
+            nodes_list = []
+            grid_height_list = []
+            del_fracs = []
+            OD_nodes_list = []
+            populations_list = []
+            gdp_list = []
+            run_list = []
+            country_list = []
+
+            for x in range(run_no):
+                OD_nodes, populations = choose_OD(OD_pos, OD_no)
+                edges_list.append(edges)
+                nodes_list.append(nodes)
+                grid_height_list.append(grid_height)
+                del_fracs.append(0.01)
+                OD_nodes_list.append(OD_nodes)
+                populations_list.append(populations)
+                gdp_list.append(gdp)
+                run_list.append(x)
+                country_list.append(country)
+
+
+            with Pool(20) as pool: 
+                if not od_buffer:
+                    results = pool.starmap(percolation_random_attack,zip(edges_list,run_list,country_list,del_fracs,OD_nodes_list,populations_list,gdp_list),chunksize=1)   
                 else:
-                    print("Random attack with od buffer started for {} {}!".format(country,network))           
-
-            all_gdp = pd.read_csv(open(data_path.joinpath("percolation_input_data","worldbank_gdp_2019.csv")),error_bad_lines=False)
-            gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
-            edges = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
-            nodes = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
-            nodes.geometry = pyg.from_wkb(nodes.geometry)
-
-
-            edges.from_id = ['n_{}'.format(x) for x in edges.from_id]
-            edges.to_id = ['n_{}'.format(x) for x in edges.to_id]
-            nodes.id = ['n_{}'.format(x) for x in nodes.id]
-
-            # Each country has a set of centroids of grid cells with populations for each cell
-            possibleOD = pd.read_csv(open(data_path.joinpath("network_OD_points","{}_{}.csv".format(country,network))))
-            grid_height = possibleOD.grid_height.iloc[2]
-            h = grid_height #np.sqrt(((grid_height/2)**2)+((grid_height/2)**2))
-
-            if h < 0.01:
-                h = 0.01
+                    results = pool.starmap(percolation_random_attack_od_buffer,zip(edges_list,nodes_list,grid_height_list,del_fracs,OD_nodes_list,populations_list,gdp_list),chunksize=1)   
                 
-            del possibleOD['Unnamed: 0']
-            del possibleOD['GID_0']
-            possibleOD['geometry'] = possibleOD['geometry'].apply(pyg.from_wkt)
+        res = pd.concat(results)
+        if not od_buffer:
+            res.to_csv(data_path.joinpath('percolation_results_random_attack_regular_revised','{}_{}_results.csv'.format(country,network)))
+        else:
+            res.to_csv(data_path.joinpath('percolation_results_random_attack_od_buffer_revised','{}_{}_results.csv'.format(country,network)))
 
-            seed = sum(map(ord,country))
-            random.seed(seed)
-            np.random.seed(seed)
-
-            OD_pos = prepare_possible_OD(possibleOD, nodes, h)
-            OD_no = min(len(OD_pos),100)
-            results = []
-
-            if not parallel:
-                for x in tqdm(range(run_no),total=run_no,desc='percolation for '+country+' '+network):
-                    OD_nodes, populations = choose_OD(OD_pos, OD_no)
-                    if not od_buffer:
-                        results.append(percolation_random_attack(edges, 0.01, OD_nodes, populations,gdp))
-                    else:
-                        results.append(percolation_random_attack_od_buffer(edges,nodes,grid_height, 0.01, OD_nodes, populations,gdp))
-
-            else:
-
-                nodes.geometry = pyg.to_wkb(nodes.geometry)
-                                
-                edges_list = []
-                nodes_list = []
-                grid_height_list = []
-                del_fracs = []
-                OD_nodes_list = []
-                populations_list = []
-                gdp_list = []
-
-                for x in range(run_no):
-                    OD_nodes, populations = choose_OD(OD_pos, OD_no)
-                    edges_list.append(edges)
-                    nodes_list.append(nodes)
-                    grid_height_list.append(grid_height)
-                    del_fracs.append(0.01)
-                    OD_nodes_list.append(OD_nodes)
-                    populations_list.append(populations)
-                    gdp_list.append(gdp)
-
-                with Pool(20) as pool: 
-                    if not od_buffer:
-                        results = pool.starmap(percolation_random_attack,zip(edges_list,del_fracs,OD_nodes_list,populations_list,gdp_list),chunksize=1)   
-                    else:
-                        results = pool.starmap(percolation_random_attack_od_buffer,zip(edges_list,nodes_list,grid_height_list,del_fracs,OD_nodes_list,populations_list,gdp_list),chunksize=1)   
-                   
-            res = pd.concat(results)
-            if not od_buffer:
-                res.to_csv(data_path.joinpath('percolation_results_random_attack_regular','{}_{}_results.csv'.format(country,network)))
-            else:
-                res.to_csv(data_path.joinpath('percolation_results_random_attack_od_buffer','{}_{}_results.csv'.format(country,network)))
-
-        except Exception as e: 
-            print("{} {}  failed because of {}".format(country,network,e))
+    except Exception as e: 
+        print("{} {}  failed because of {}".format(country,network,e))
 
             
-def run_percolation_local_attack(country,run_no=1,grid_size=0.1,parallel=False):
+def run_percolation_local_attack(country,run_no=1,grid_size=0.1,parallel=True):
     """ This function returns results for a single country's transport network. Possible OD points are chosen
     then probabilistically selected according to the populations each node counts (higher population more likely).
 
@@ -1052,69 +1151,90 @@ def run_percolation_local_attack(country,run_no=1,grid_size=0.1,parallel=False):
 
     data_path = Path(r'/scistor/ivm/data_catalogue/open_street_map/')
     #data_path = Path(r'C:/data/')
+    network = '0'
+
+    try:
 
 
-    #get all networks for a country
-    get_all_networks = [y.name[4] for y in data_path.joinpath("percolation_networks").iterdir() if (y.name.startswith(country) & y.name.endswith('-edges.feather'))]
+        if data_path.joinpath('percolation_results_local_attack_{}_revised'.format(str(grid_size).replace('.','')),'{}_{}_results.csv'.format(country,network)).is_file():
+            print("{} {} already finished!".format(country,network))           
+            return None
+        
+        print("Local attack started for {} {} for {} degrees!".format(country,network,grid_size))  
 
-    for network in get_all_networks:
-    
-        try:
-            if data_path.joinpath('percolation_results_local_attack_{}'.format(str(grid_size).replace('.','')),'{}_{}_results.csv'.format(country,network)).is_file():
-                print("{} {} already finished!".format(country,network))           
-                continue
-            
-            print("Local attack started for {} {} for {} degrees!".format(country,network,grid_size))  
+        all_gdp = pd.read_csv(open(data_path.joinpath("percolation_input_data","worldbank_gdp_2019.csv")),error_bad_lines=False)
+        gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
+        edges = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
+        nodes = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
+        nodes.geometry = pyg.from_wkb(nodes.geometry)
 
-            all_gdp = pd.read_csv(open(data_path.joinpath("percolation_input_data","worldbank_gdp_2019.csv")),error_bad_lines=False)
-            gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
-            edges = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
-            nodes = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
-            nodes.geometry = pyg.from_wkb(nodes.geometry)
+        print('data loaded for {}'.format(country))
 
-            edges.from_id = ['n_{}'.format(x) for x in edges.from_id]
-            edges.to_id = ['n_{}'.format(x) for x in edges.to_id]
-            nodes.id = ['n_{}'.format(x) for x in nodes.id]
+        edges.from_id = ['n_{}'.format(x) for x in edges.from_id]
+        edges.to_id = ['n_{}'.format(x) for x in edges.to_id]
+        nodes.id = ['n_{}'.format(x) for x in nodes.id]
 
-            # Each country has a set of centroids of grid cells with populations for each cell
-            possibleOD = pd.read_csv(open(data_path.joinpath("network_OD_points","{}_{}.csv".format(country,network))))
-            grid_height = possibleOD.grid_height.iloc[2]
-            #radius of circle to cover entire box,  pythagorus theorem
-            h = grid_height #np.sqrt(((grid_height/2)**2)+((grid_height/2)**2))
-            del possibleOD['Unnamed: 0']
-            del possibleOD['GID_0']
-            possibleOD['geometry'] = possibleOD['geometry'].apply(pyg.from_wkt)
+        # Each country has a set of centroids of grid cells with populations for each cell
+        possibleOD = pd.read_csv(open(data_path.joinpath("network_OD_points_revised","{}.csv".format(country))))
+        grid_height = possibleOD.grid_height.iloc[2]
+        h = grid_height 
 
-            seed = sum(map(ord,country))
-            random.seed(seed)
-            np.random.seed(seed)
+        seed = sum(map(ord,country))
+        random.seed(seed)
+        np.random.seed(seed)
 
-            if h < 0.01:
-                h = 0.01
+        # OD_pos = prepare_possible_OD(possibleOD, nodes, h)
 
-            OD_pos = prepare_possible_OD(possibleOD, nodes, h)
-            OD_no = min(len(OD_pos),100)
-            results = []
+        df_OD_pos = pd.read_csv(open(data_path.joinpath("OD_pos_revised","{}.csv".format(country))))
+        OD_pos = list(zip(df_OD_pos.node_id.values,df_OD_pos.population.values))
+        OD_no = min(len(OD_pos),100)
+        results = []
 
-            # create grid and determine total_runs
-            edges.geometry = pyg.from_wkb(edges.geometry)
-            bbox = create_bbox(edges)
+        # create grid and determine total_runs
+        edges.geometry = pyg.from_wkb(edges.geometry)
+        bbox = create_bbox(edges)
 
-            df_grid = pd.DataFrame(create_grid(bbox,grid_size),columns=['geometry'])
-            df_grid = df_grid.loc[pyg.intersects(df_grid.geometry.values,pyg.convex_hull(pyg.multilinestrings(edges.geometry.values)))].reset_index(drop=True)
+        df_grid = pd.DataFrame(create_grid(bbox,grid_size),columns=['geometry'])
+        df_grid = df_grid.loc[pyg.intersects(df_grid.geometry.values,pyg.convex_hull(pyg.multilinestrings(edges.geometry.values)))].reset_index(drop=True)
+        
+        print('grid created for {}'.format(country))
 
-            OD_nodes, populations = choose_OD(OD_pos, OD_no)
+        OD_nodes, populations = choose_OD(OD_pos, OD_no)
+
+        if not parallel:
             results.append(percolation_local_attack(edges,df_grid, OD_nodes, populations,gdp))
+        else:
+            run_no = 100
+            grid_list = np.array_split(df_grid, run_no)
+            edges_list = []
+            nodes_list = []
+            OD_nodes_list = []
+            populations_list = []
+            gdp_list = []
+            runs_list = []
+            country_list = []
 
-            res = pd.concat(results)
-            res.to_csv(data_path.joinpath('percolation_results_local_attack_{}'.format(str(grid_size).replace('.','')),'{}_{}_results.csv'.format(country,network)))
+            for x in range(run_no):
+                edges_list.append(edges)
+                nodes_list.append(nodes)
+                OD_nodes_list.append(OD_nodes)
+                populations_list.append(populations)
+                gdp_list.append(gdp)
+                runs_list.append(x)
+                country_list.append(country)
 
-            df_grid.to_csv(data_path.joinpath('percolation_grids','{}_{}_{}.csv'.format(country,network,str(grid_size).replace('.',''))))
+            with Pool(10) as pool: 
+                results = pool.starmap(percolation_local_attack,zip(edges_list,grid_list,runs_list,country_list,OD_nodes_list,populations_list,gdp_list),chunksize=1) 
 
-        except Exception as e: 
-            print("{} {}  failed because of {}".format(country,network,e))
+        res = pd.concat(results)
+        res.to_csv(data_path.joinpath('percolation_results_local_attack_{}_revised'.format(str(grid_size).replace('.','')),'{}_{}_results.csv'.format(country,network)))
 
-def run_percolation_targeted_attack(country,run_no=10,parallel=False):
+        df_grid.to_csv(data_path.joinpath('percolation_grids','{}_{}_{}.csv'.format(country,network,str(grid_size).replace('.',''))))
+
+    except Exception as e: 
+        print("{} {}  failed because of {}".format(country,network,e))
+
+def run_percolation_targeted_attack(country,run_no=10,parallel=True):
     """ This function returns results for a single country's transport network.  Possible OD points are chosen
     then probabilistically selected according to the populations each node counts (higher population more likely).
 
@@ -1129,61 +1249,97 @@ def run_percolation_targeted_attack(country,run_no=10,parallel=False):
     #data_path = Path(r'C:/data/')
 
     #get all networks for a country
-    get_all_networks = [y.name[4] for y in data_path.joinpath("percolation_networks").iterdir() if (y.name.startswith(country) & y.name.endswith('-edges.feather'))]
+    #get_all_networks = [y.name[4] for y in data_path.joinpath("percolation_networks").iterdir() if (y.name.startswith(country) & y.name.endswith('-edges.feather'))]
+    network = '0'
 
-    for network in get_all_networks:
-        try:
-            if data_path.joinpath('percolation_results_targeted_attack','{}_{}_results.csv'.format(country,network)).is_file():
-                print("{} {} already finished!".format(country,network))           
-                continue
-            
-            print("Targeted attack started for {} {}!".format(country,network))  
+    #for network in get_all_networks:
+    try:
 
-            all_gdp = pd.read_csv(open(data_path.joinpath("percolation_input_data","worldbank_gdp_2019.csv")),error_bad_lines=False)
-            gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
-            edges = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
-            nodes = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
-            nodes.geometry = pyg.from_wkb(nodes.geometry)
 
-            edges.from_id = ['n_{}'.format(x) for x in edges.from_id]
-            edges.to_id = ['n_{}'.format(x) for x in edges.to_id]
-            nodes.id = ['n_{}'.format(x) for x in nodes.id]
+        if data_path.joinpath('percolation_results_targeted_attack_revised','{}_{}_results.csv'.format(country,network)).is_file():
+            print("{} {} already finished!".format(country,network))           
+            return None
+        
+        print("Targeted attack started for {} {}!".format(country,network))  
 
-            # Each country has a set of centroids of grid cells with populations for each cell
-            possibleOD = pd.read_csv(open(data_path.joinpath("network_OD_points","{}_{}.csv".format(country,network))))
-            grid_height = possibleOD.grid_height.iloc[2]
+        all_gdp = pd.read_csv(open(data_path.joinpath("percolation_input_data","worldbank_gdp_2019.csv")),error_bad_lines=False)
+        gdp = all_gdp.gdp.loc[all_gdp.iso==country].values[0]
+        edges = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-edges.feather".format(country,network)))
+        nodes = pd.read_feather(data_path.joinpath("percolation_networks","{}_{}-nodes.feather".format(country,network)))
+        nodes.geometry = pyg.from_wkb(nodes.geometry)
 
-            #radius of circle to cover entire box,  pythagorus theorem
-            h = grid_height #np.sqrt(((grid_height/2)**2)+((grid_height/2)**2))
-            del possibleOD['Unnamed: 0']
-            del possibleOD['GID_0']
-            possibleOD['geometry'] = possibleOD['geometry'].apply(pyg.from_wkt)
+        edges.from_id = ['n_{}'.format(x) for x in edges.from_id]
+        edges.to_id = ['n_{}'.format(x) for x in edges.to_id]
+        nodes.id = ['n_{}'.format(x) for x in nodes.id]
 
-            seed = sum(map(ord,country))
-            random.seed(seed)
-            np.random.seed(seed)
+        # Each country has a set of centroids of grid cells with populations for each cell
+        possibleOD = pd.read_csv(open(data_path.joinpath("network_OD_points_revised","{}.csv".format(country))))
+        grid_height = possibleOD.grid_height.iloc[2]
+        h = grid_height 
 
-            if h < 0.01:
-                h = 0.01
+        seed = sum(map(ord,country))
+        random.seed(seed)
+        np.random.seed(seed)
 
-            OD_pos = prepare_possible_OD(possibleOD, nodes, h)
-            OD_no = min(len(OD_pos),100)
-            results = []
-            
-            #for x in range(run_no):#,total=run_no,desc='percolation for '+country+' '+network):
-            OD_nodes, populations = choose_OD(OD_pos, OD_no)
-            results.append(percolation_targeted_attack_speedup(edges,country,network, OD_nodes,populations,gdp))
+        # OD_pos = prepare_possible_OD(possibleOD, nodes, h)
 
-            res = pd.concat(results)
-            res.to_csv(data_path.joinpath('percolation_results_targeted_attack','{}_{}_results.csv'.format(country,network)))
+        df_OD_pos = pd.read_csv(open(data_path.joinpath("OD_pos_revised","{}.csv".format(country))))
+        OD_pos = list(zip(df_OD_pos.node_id.values,df_OD_pos.population.values))
+        OD_no = min(len(OD_pos),100)
+        results = []
+        
+        #for x in range(run_no):#,total=run_no,desc='percolation for '+country+' '+network):
+        OD_nodes, populations = choose_OD(OD_pos, OD_no)
 
-        except Exception as e: 
-            print("{} {}  failed because of {}".format(country,network,e))
+        if not parallel:
+            results.append(percolation_targeted_attack_speedup(edges,country,network,OD_nodes,populations,gdp))
+        else:
+
+            run_no = 100
+            edge_sublist_list = np.array_split(edges, run_no)
+            edges_list = []
+            nodes_list = []
+            OD_nodes_list = []
+            populations_list = []
+            country_list = []
+            network_list = []
+            gdp_list = []
+            runs_list = []
+
+
+            for x in range(run_no):
+                edges_list.append(edges)
+                nodes_list.append(nodes)
+                OD_nodes_list.append(OD_nodes)
+                populations_list.append(populations)
+                gdp_list.append(gdp)
+                runs_list.append(x)
+                country_list.append(country)
+                network_list.append(country)
+
+            with Pool(20) as pool: 
+
+                results = pool.starmap(percolation_targeted_attack_speedup,zip(edges_list,
+                                                                                edge_sublist_list,
+                                                                                runs_list,
+                                                                                country_list,
+                                                                                network_list,
+                                                                                OD_nodes_list,
+                                                                                populations_list,
+                                                                                gdp_list),chunksize=1) 
+
+
+        res = pd.concat(results)
+        res.to_csv(data_path.joinpath('percolation_results_targeted_attack_revised','{}_{}_results.csv'.format(country,network)))
+
+    except Exception as e: 
+        print("{} {}  failed because of {}".format(country,network,e))
 
 def run_random_attack_percolations(country):
 
     # random attack
     run_percolation_random_attack(country,run_no=200,od_buffer=False,parallel=True)
+    run_percolation_random_attack(country,run_no=200,od_buffer=True,parallel=True)
 
 def run_local_targeted_attack_percolations(country):
 
@@ -1200,17 +1356,35 @@ if __name__ == '__main__':
     data_path = Path("/scistor/ivm/data_catalogue/open_street_map")
     #data_path = Path(r'C:/data/')
 
-    to_ignore = ['ICA', 'SPM', 'XPI', 'SJM', 'ALA', 'TUV', 'PCN', 'XNC', 'IOT', 'ATF', 'XCA']
+    to_ignore = ['ICA', 'SPM', 'XPI', 'SJM', 'ALA', 'TUV', 'PCN', 'XNC', 'IOT', 'ATF', 'XCA', # initial list, below are the ones smaller than 100 nodes
+    'GRL', 'GRD', 'SLB', 'FLK', 'MSR', 'NFK', 'VCT', 'VUT', 'TCA', 'NRU', 'WSM', 'VGB', 'VAT', 
+    'BLM', 'BES', 'FSM', 'MAF', 'WLF', 'ASM', 'NIU', 'CXR', 'AIA', 'PLW','DMA', 'MDV', 'COK', 'KIR', 'MHL', 'SHN','CCK']
 
-    countries = [y.name[:3] for y in data_path.joinpath('percolation_networks').iterdir()]   
-    fin_countries =  [y.name[:3] for y in data_path.joinpath('percolation_results_random_attack_regular').iterdir()]
+    all_files = [ files for files in data_path.joinpath('network_OD_points_revised').iterdir() ]
+    sorted_files = sorted(all_files, key = os.path.getsize) 
+    countries = [y.name[:3] for y in sorted_files]
+    
+    fin_countries =  [y.name[:3] for y in data_path.joinpath('percolation_results_local_attack_005_revised').iterdir()][::-1]
+
     countries = list(set(countries)-set(fin_countries)-set(to_ignore))
 
+    print(countries)
 
+    country = sys.argv[1]
+    # # #print(countries[int(sys.argv[1]]))
+    # if (country in fin_countries) | (country in to_ignore):
+    #     print('{} already done or too small!'.format(country))
+
+    #run_local_targeted_attack_percolations(sys.argv[1])
+    #run_percolation_local_attack(sys.argv[1],grid_size=np.float(sys.argv[2]))
     # # run_percolation_targeted_attack('NLD')
-    # # #run_percolation_per_grid(sys.argv[1],run_no=1
-    get_metrics_and_split('belgium_buffer')
+    # # #run_percolation_per_grid(sys.argv[1],run_no=1)
+    #run_random_attack_percolations('AND')
+
     # for country in countries:
-    #      run_random_attack_percolations(country)
-    # with Pool(17) as pool: 
-    #     pool.map(run_local_targeted_attack_percolations,countries,chunksize=1)   
+    run_local_targeted_attack_percolations(country)   
+    #run_random_attack_percolations(country)    
+
+
+    #with Pool(15) as pool: 
+    #    pool.map(run_local_targeted_attack_percolations,countries,chunksize=1)   

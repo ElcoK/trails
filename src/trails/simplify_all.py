@@ -1,20 +1,15 @@
 import os,sys
-import numpy as np
-import pandas as pd
-import geopandas as gpd
-from extract import retrieve, mainRoads,roads,ferries,railway
-from osgeo import gdal
-import pygeos as pyg
-import simplify as simply
-import network as net
-import matplotlib.pyplot as plt
-import igraph as ig
-import feather
-import math
-from multiprocessing import Pool,cpu_count
 import pathlib
+
+import shapely
+import pandas as pd
+import simplify as simply
+
+from osgeo import gdal
+from multiprocessing import Pool,cpu_count
 from pathlib import Path
 
+from damagescanner.vector import roads
 
 code_path = (pathlib.Path(__file__).parent.absolute())
 gdal.SetConfigOption("OSM_CONFIG_FILE", os.path.join(code_path,'..','..',"osmconf.ini"))
@@ -38,19 +33,12 @@ if __name__ == '__main__':
         cGDF = cGDF.loc[cGDF.highway.isin(roads_to_keep)].reset_index(drop=True)
         bob = simply.simplified_network(cGDF)
         a,b = bob.edges,bob.nodes
-        a['geometry'] = pyg.to_wkb(a['geometry'])
-        b['geometry'] = pyg.to_wkb(b['geometry'])
-        feather.write_dataframe(a,"C://Data//road_networks/"+x+"-edges.feather")
-        feather.write_dataframe(b,"C://Data//road_networks/"+x+"-nodes.feather")
+        a['geometry'] = shapely.to_wkb(a['geometry'])
+        b['geometry'] = shapely.to_wkb(b['geometry'])
+        pd.to_feather(a,"C://Data//road_networks/"+x+"-edges.feather")
+        pd.to_feather(b,"C://Data//road_networks/"+x+"-nodes.feather")
         print(x + " is done")
             #x_ax, isolated_trip_results = net.alt(a)
     
-    country = 'belgium_buffer'
+    country = sys.arg[1]
     net_final = simp(country)
-    #with Pool(processes=cpu_count()-4) as pool: conde dea
-    #     pool.map(simp,countries,chunksize=1)
-
-
-# data_path = "/scistor/ivm/data_catalogue/open_street_map/road_networks/"+x+"-edges.feather"
-# fin_countries  = [x[:3] for x in os.listdir(data_path) if x.endswith('-edges.feather')]
-# set(countries) - set(fin_countries)

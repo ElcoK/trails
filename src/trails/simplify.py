@@ -3,28 +3,19 @@
 Ben Dickens, Elco Koks & Tom Russell
 """
 import os,sys
+
+os.environ['USE_PYGEOS'] = '0'
+
 import re
+import shapely
+
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-import pygeos
-import pygeos.geometry as pygeom
-import contextily as ctx
+
 from rasterstats import zonal_stats
 import pyproj
-import pylab as pl
-from IPython import display
-import seaborn as sns
-import subprocess
-from shapely.wkb import loads
-import time
-from timeit import default_timer as timer
-import feather
-import igraph as ig
 
-from pandas import DataFrame
-from shapely.geometry import Point, MultiPoint, LineString, GeometryCollection, shape, mapping
-from shapely.ops import split, linemerge
 from tqdm import tqdm
 from pathlib import Path
 
@@ -33,9 +24,11 @@ sys.path.append(os.path.join('..','src','trails'))
 
 from flow_model import *
 from simplify import *
-from extract import railway,ferries,mainRoads,roads
-import pathlib
+from damagescanner.vector import mainRoads,roads
+
+
 pd.options.mode.chained_assignment = None  
+
 #data_path = os.path.join('..','data')
 data_path = (Path(__file__).parent.absolute().parent.absolute().parent.absolute())
 
@@ -97,8 +90,8 @@ class Network():
         if epsg is not None:
             crs = {'init': 'epsg:{}'.format(epsg)}
 
-        self.edges = pygeos.geometry.set_srid(point, epsg)
-        self.nodes = pygeos.geometry.set_srid(point, epsg)
+        self.edges = shapely.geometry.set_srid(shapely.point, epsg)
+        self.nodes = shapely.geometry.set_srid(shapely.point, epsg)
 
     def to_crs(self, crs=None, epsg=None):
         """Set network (node and edge) crs
@@ -166,7 +159,7 @@ def add_topology(network, id_col='id'):
     node_ends = []
     bugs = []
     
-    sindex = pygeos.STRtree(network.nodes.geometry)
+    sindex = shapely.STRtree(network.nodes.geometry)
     for edge in tqdm(network.edges.itertuples(), desc="topology", total=len(network.edges)):
         start, end = line_endpoints(edge.geometry)
 
@@ -183,7 +176,6 @@ def add_topology(network, id_col='id'):
             bugs.append(edge.id)
             to_ids.append(-1)
 
-    #print(len(bugs)," Edges not connected to nodes")
     edges = network.edges.copy()
     nodes = network.nodes.copy()
     edges['from_id'] = from_ids
@@ -209,7 +201,7 @@ def get_endpoints(network):
         if edge.geometry is None:
             continue
         # 5 is MULTILINESTRING
-        if pygeom.get_type_id(edge.geometry) == '5':
+        if shapely.get_type_id(edge.geometry) == '5':
             for line in edge.geometry.geoms:
                 start, end = line_endpoints(line)
                 endpoints.append(start)
@@ -275,18 +267,18 @@ def split_multilinestrings(network):
     simple_edge_geoms = []
     edges = network.edges
     for edge in tqdm(edges.itertuples(index=False), desc="split_multi", total=len(edges)):
-        if pygeom.get_type_id(edge.geometry) == 5:
-            edge_parts = [x for x in pygeos.geometry.get_geometry(edge, pygeos.geometry.get_num_geometries(edge))]
+        if shapely.get_type_id(edge.geometry) == 5:
+            edge_parts = [x for x in shapely.geometry.get_geometry(edge, shapely.geometry.get_num_geometries(edge))]
         else:
             edge_parts = [edge.geometry]
 
         for part in edge_parts:
             simple_edge_geoms.append(part)
 
-        attrs = DataFrame([edge] * len(edge_parts))
+        attrs = pd.DataFrame([edge] * len(edge_parts))
         simple_edge_attrs.append(attrs)
 
-    simple_edge_geoms = DataFrame(simple_edge_geoms, columns=['geometry'])
+    simple_edge_geoms = pd.DataFrame(simple_edge_geoms, columns=['geometry'])
     edges = pd.concat(simple_edge_attrs, axis=0).reset_index(drop=True).drop('geometry', axis=1)
     edges = pd.concat([edges, simple_edge_geoms], axis=1)
 
@@ -313,13 +305,13 @@ def merge_multilinestring(geom):
     """Merge a MultiLineString to LineString
 
     Args:
-        geom (pygeos.geometry): A pygeos geometry, most likely a linestring or a multilinestring
+        geom (shapely.geometry): A shapely geometry, most likely a linestring or a multilinestring
 
     Returns:
-        geom (pygeos.geometry): A pygeos linestring geometry if merge was succesful. If not, it returns the input.
+        geom (shapely.geometry): A shapely linestring geometry if merge was succesful. If not, it returns the input.
     """        
-    if pygeom.get_type_id(geom) == '5':
-        geom_inb = pygeos.line_merge(geom)
+    if shapely.get_type_id(geom) == '5':
+        geom_inb = shapely.line_merge(geom)
         if geom_inb.is_ring: # still something to fix if desired
             return geom_inb
         else:
@@ -344,11 +336,12 @@ def snap_nodes(network, threshold=None):
             snap = node.geometry
         return snap
 
+    # snap nodes to edges
     snapped_geoms = network.nodes.apply(snap_node, axis=1)
     geom_col = geometry_column_name(network.nodes)
     nodes = pd.concat([
         network.nodes.drop(geom_col, axis=1),
-        DataFrame(snapped_geoms, columns=[geom_col])
+        pd.DataFrame(snapped_geoms, columns=[geom_col])
     ], axis=1)
 
     return Network(
@@ -381,7 +374,7 @@ def link_nodes_to_edges_within(network, distance, condition=None, tolerance=1e-9
             if point != node.geometry:
                 new_node_geoms.append(point)
                 # add edges linking
-                line = LineString([node.geometry, point])
+                line = shapely.LineString([node.geometry, point])
                 new_edge_geoms.append(line)
 
     new_nodes = matching_df_from_geoms(network.nodes, new_node_geoms)
@@ -420,7 +413,7 @@ def link_nodes_to_nearest_edge(network, condition=None):
         if point != node.geometry:
             new_node_geoms.append(point)
             # add edges linking
-            line = LineString([node.geometry, point])
+            line = shapely.LineString([node.geometry, point])
             new_edge_geoms.append(line)
 
     new_nodes = matching_df_from_geoms(network.nodes, new_node_geoms)
@@ -447,7 +440,7 @@ def find_roundabouts(network):
     """    
     roundabouts = []
     for edge in network.edges.itertuples():
-        if pygeos.predicates.is_ring(edge.geometry): roundabouts.append(edge)
+        if shapely.predicates.is_ring(edge.geometry): roundabouts.append(edge)
     return roundabouts
 
 def clean_roundabouts(network):
@@ -461,7 +454,7 @@ def clean_roundabouts(network):
         network (class): A network composed of nodes (points in space) and edges (lines)
     """    
 
-    sindex = pygeos.STRtree(network.edges['geometry'])
+    sindex = shapely.STRtree(network.edges['geometry'])
     edges = network.edges
     new_geom = network.edges
     new_edge = []
@@ -470,12 +463,10 @@ def clean_roundabouts(network):
     attributes = [x for x in network.edges.columns if x not in ['geometry','osm_id']]
 
     roundabouts = find_roundabouts(network)
-    testy = []
     
     for roundabout in roundabouts:
 
-        round_bound = pygeos.constructive.boundary(roundabout.geometry)
-        round_centroid = pygeos.constructive.centroid(roundabout.geometry)
+        round_centroid = shapely.constructive.centroid(roundabout.geometry)
         remove_edge.append(roundabout.Index)
 
         edges_intersect = _intersects(roundabout.geometry, network.edges['geometry'], sindex)
@@ -484,18 +475,19 @@ def clean_roundabouts(network):
         #index at e[0] geometry at e[1] of edges that intersect with 
         for e in edges_intersect.items():
             edge = edges.iloc[e[0]]
-            start = pygeom.get_point(e[1],0)
-            end = pygeom.get_point(e[1],-1)
-            first_co_is_closer = pygeos.measurement.distance(end, round_centroid) > pygeos.measurement.distance(start, round_centroid) 
-            co_ords = pygeos.coordinates.get_coordinates(edge.geometry)
-            centroid_co = pygeos.coordinates.get_coordinates(round_centroid)
+            start = shapely.get_point(e[1],0)
+            end = shapely.get_point(e[1],-1)
+            first_co_is_closer = shapely.measurement.distance(end, round_centroid) > shapely.measurement.distance(start, round_centroid) 
+            co_ords = shapely.coordinates.get_coordinates(edge.geometry)
+            centroid_co = shapely.coordinates.get_coordinates(round_centroid)
             if first_co_is_closer: 
                 new_co = np.concatenate((centroid_co,co_ords))
             else:
                 new_co = np.concatenate((co_ords,centroid_co))
-            snap_line = pygeos.linestrings(new_co)
+            snap_line = shapely.linestrings(new_co)
 
-            snap_line = pygeos.linestrings(new_co)
+            snap_line = shapely.linestrings(new_co)
+
             #an edge should never connect to more than 2 roundabouts, if it does this will break
             if edge.osm_id in new_edge_id:
                 a = []
@@ -506,15 +498,15 @@ def clean_roundabouts(network):
                         break
                     counter += 1
                 double_edge = new_edge.pop(a)
-                start = pygeom.get_point(double_edge[-1],0)
-                end = pygeom.get_point(double_edge[-1],-1)
-                first_co_is_closer = pygeos.measurement.distance(end, round_centroid) > pygeos.measurement.distance(start, round_centroid) 
-                co_ords = pygeos.coordinates.get_coordinates(double_edge[-1])
+                start = shapely.get_point(double_edge[-1],0)
+                end = shapely.get_point(double_edge[-1],-1)
+                first_co_is_closer = shapely.measurement.distance(end, round_centroid) > shapely.measurement.distance(start, round_centroid) 
+                co_ords = shapely.coordinates.get_coordinates(double_edge[-1])
                 if first_co_is_closer: 
                     new_co = np.concatenate((centroid_co,co_ords))
                 else:
                     new_co = np.concatenate((co_ords,centroid_co))
-                snap_line = pygeos.linestrings(new_co)
+                snap_line = shapely.linestrings(new_co)
                 new_edge.append([edge.osm_id]+list(edge[list(attributes)])+[snap_line])
 
             else:
@@ -543,7 +535,7 @@ def find_hanging_nodes(network):
     return network.nodes.iloc[hang_index]
 
 def add_distances(network):
-    """This method adds a distance column using pygeos (converted from shapely) 
+    """This method adds a distance column using shapely (converted from shapely) 
     assuming the new crs from the latitude and longitude of the first node
     distance is in metres
 
@@ -559,17 +551,17 @@ def add_distances(network):
     #The commented out crs does not work in all cases
     #current_crs = [*network.edges.crs.values()]
     #current_crs = str(current_crs[0])
-    lat = pygeom.get_y(network.nodes['geometry'].iloc[0])
-    lon = pygeom.get_x(network.nodes['geometry'].iloc[0])
+    lat = shapely.get_y(network.nodes['geometry'].iloc[0])
+    lon = shapely.get_x(network.nodes['geometry'].iloc[0])
     # formula below based on :https://gis.stackexchange.com/a/190209/80697 
     approximate_crs = "epsg:" + str(int(32700-np.round((45+lat)/90,0)*100+np.round((183+lon)/6,0)))
-    #from pygeos/issues/95
+    #from shapely/issues/95
     geometries = network.edges['geometry']
-    coords = pygeos.get_coordinates(geometries)
+    coords = shapely.get_coordinates(geometries)
     transformer=pyproj.Transformer.from_crs(current_crs, approximate_crs,always_xy=True)
     new_coords = transformer.transform(coords[:, 0], coords[:, 1])
-    result = pygeos.set_coordinates(geometries.copy(), np.array(new_coords).T)
-    dist = pygeos.length(result)
+    result = shapely.set_coordinates(geometries.copy(), np.array(new_coords).T)
+    dist = shapely.length(result)
     edges = network.edges.copy()
     edges['distance'] = dist
     return Network(
@@ -672,7 +664,7 @@ def drop_hanging_nodes(network, tolerance = 0.005):
     degEd = ed.iloc[np.sort(eInd[0])]
     edge_id_drop = []
     for d in degEd.itertuples():
-        dist = pygeos.measurement.length(d.geometry)
+        dist = shapely.measurement.length(d.geometry)
         #If the edge is shorter than the tolerance
         #add the ID to the drop list and update involved node degrees
         if dist < tolerance:
@@ -716,7 +708,7 @@ def merge_edges(network, print_err=False):
     nod = net.nodes.copy()
     edg = net.edges.copy()
     optional_cols = edg.columns.difference(['osm_id','geometry','from_id','to_id','id'])
-    edg_sindex = pygeos.STRtree(network.edges.geometry)
+    edg_sindex = shapely.STRtree(network.edges.geometry)
     if 'degree' not in network.nodes.columns:
         deg = calculate_degree(network)
     else: deg = nod['degree'].to_numpy()
@@ -729,7 +721,6 @@ def merge_edges(network, print_err=False):
     #nodes
     nodGeom = nod['geometry']
     eIDtoRemove =[]
-    nIDtoRemove =[]
 
     c = 0
     #pbar = tqdm(total=len(n2))
@@ -768,7 +759,7 @@ def merge_edges(network, print_err=False):
             eID.discard(edgePath1.id)
             try:
                 edgePath1 = min([edg.iloc[match_idx] for match_idx in eID],
-                key= lambda match: pygeos.distance(nextNode1Geom,(match.geometry)))
+                key= lambda match: shapely.distance(nextNode1Geom,(match.geometry)))
             except: 
                 continue
             pos_0_deg.append(nextNode1)
@@ -784,7 +775,7 @@ def merge_edges(network, print_err=False):
             eID.discard(edgePath2.id)
             try:
                 edgePath2 = min([edg.iloc[match_idx] for match_idx in eID],
-                key= lambda match: pygeos.distance(nextNode2Geom,(match.geometry)))
+                key= lambda match: shapely.distance(nextNode2Geom,(match.geometry)))
             except: continue
             pos_0_deg.append(nextNode2)
             n2.discard(nextNode2)
@@ -792,10 +783,10 @@ def merge_edges(network, print_err=False):
             newEdge.append(edgePath2.geometry)
             possibly_delete.append(edgePath2.id)
         #Update the information of the first edge
-        new_merged_geom = pygeos.line_merge(pygeos.multilinestrings([x for x in newEdge]))
-        if pygeom.get_type_id(new_merged_geom) == 1: 
+        new_merged_geom = shapely.line_merge(shapely.multilinestrings([x for x in newEdge]))
+        if shapely.get_type_id(new_merged_geom) == 1: 
             edg.at[info_first_edge,'geometry'] = new_merged_geom
-            if nodGeom[nextNode1]==pygeom.get_point(new_merged_geom,0):
+            if nodGeom[nextNode1]==shapely.get_point(new_merged_geom,0):
                 edg.at[info_first_edge,'from_id'] = nextNode1
                 edg.at[info_first_edge,'to_id'] = nextNode2
             else: 
@@ -808,7 +799,7 @@ def merge_edges(network, print_err=False):
             mode_edges = edg.loc[edg.id.isin(possibly_delete)]
             edg.at[info_first_edge,optional_cols] = mode_edges[optional_cols].mode().iloc[0].values
         else:
-            if print_err: print("Line", info_first_edge, "failed to merge, has pygeos type ", pygeom.get_type_id(edg.at[info_first_edge,'geometry']))
+            if print_err: print("Line", info_first_edge, "failed to merge, has shapely type ", pygeom.get_type_id(edg.at[info_first_edge,'geometry']))
 
         #pbar.update(1)
     
@@ -832,10 +823,10 @@ def find_closest_2_edges(edgeIDs, nodeID, edges, nodGeometry):
         [type]: [description]
     """    
     edgePath1 = min([edges.iloc[match_idx] for match_idx in edgeIDs],
-            key=lambda match: pygeos.distance(nodGeometry,match.geometry))
+            key=lambda match: shapely.distance(nodGeometry,match.geometry))
     edgeIDs.remove(edgePath1.id)
     edgePath2 = min([edges.iloc[match_idx] for match_idx in edgeIDs],
-            key=lambda match:  pygeos.distance(nodGeometry,match.geometry))
+            key=lambda match:  shapely.distance(nodGeometry,match.geometry))
     return edgePath1, edgePath2
 
 def geometry_column_name(df):
@@ -858,7 +849,7 @@ def matching_df_from_geoms(df, geoms):
 
     Args:
         df (pandas.DataFrame): [description]
-        geoms (numpy.array): numpy array with pygeos geometries
+        geoms (numpy.array): numpy array with shapely geometries
 
     Returns:
         [type]: [description]
@@ -912,7 +903,7 @@ def drop_duplicate_geometries(df, keep='first'):
         [type]: [description]
     """    
 
-    mask = df.geometry.apply(lambda geom: pygeos.to_wkb(geom))
+    mask = df.geometry.apply(lambda geom: shapely.to_wkb(geom))
     # use dropped duplicates index to drop from actual dataframe
     return df.iloc[mask.drop_duplicates(keep).index]
 
@@ -920,7 +911,7 @@ def nearest_point_on_edges(point, edges):
     """Find nearest point on edges to a point
 
     Args:
-        point (pygeos.geometry): [description]
+        point (shapely.geometry): [description]
         edges (network.edges): [description]
 
     Returns:
@@ -934,7 +925,7 @@ def nearest_node(point, nodes,sindex):
     """Find nearest node to a point
 
     Args:
-        point *pygeos.geometry): [description]
+        point *shapely.geometry): [description]
         nodes (network.nodes): [description]
         sindex ([type]): [description]
 
@@ -947,7 +938,7 @@ def nearest_edge(point, edges,sindex):
     """Find nearest edge to a point
 
     Args:
-        point (pygeos.geometry): [description]
+        point (shapely.geometry): [description]
         edges (network.edges): [description]
         sindex ([type]): [description]
 
@@ -960,7 +951,7 @@ def nearest(geom, df,sindex):
     """Find the element of a DataFrame nearest a geometry
 
     Args:
-        geom (pygeos.geometry): [description]
+        geom (shapely.geometry): [description]
         df (pandas.DataFrame): [description]
         sindex ([type]): [description]
 
@@ -970,7 +961,7 @@ def nearest(geom, df,sindex):
     matches_idx = sindex.query(geom)
     nearest_geom = min(
         [df.iloc[match_idx] for match_idx in matches_idx],
-        key=lambda match: pygeos.measurement.distance(match.geometry,geom)
+        key=lambda match: shapely.measurement.distance(match.geometry,geom)
     )
     return nearest_geom
 
@@ -978,7 +969,7 @@ def edges_within(point, edges, distance):
     """Find edges within a distance of point
 
     Args:
-        point (pygeos.geometry): [description]
+        point (shapely.geometry): [description]
         edges (network.edges): [description]
         distance ([type]): [description]
 
@@ -991,7 +982,7 @@ def d_within(geom, df, distance):
     """Find the subset of a DataFrame within some distance of a shapely geometry
 
     Args:
-        geom (pygeos.geometry): [description]
+        geom (shapely.geometry): [description]
         df (pandas.DataFrame): [description]
         distance ([type]): [description]
 
@@ -1004,7 +995,7 @@ def _intersects(geom, df, sindex,tolerance=1e-9):
     """[summary]
 
     Args:
-        geom (pygeos.geometry): [description]
+        geom (shapely.geometry): [description]
         df ([type]): [description]
         sindex ([type]): [description]
         tolerance ([type], optional): [description]. Defaults to 1e-9.
@@ -1012,15 +1003,15 @@ def _intersects(geom, df, sindex,tolerance=1e-9):
     Returns:
         [type]: [description]
     """    
-    buffer = pygeos.buffer(geom,tolerance)
-    if pygeos.is_empty(buffer):
+    buffer = shapely.buffer(geom,tolerance)
+    if shapely.is_empty(buffer):
         # can have an empty buffer with too small a tolerance, fallback to original geom
         buffer = geom
     try:
         return _intersects_df(buffer, df,sindex)
     except: 
         # can exceptionally buffer to an invalid geometry, so try re-buffering
-        buffer = pygeos.buffer(geom,0)
+        buffer = shapely.buffer(geom,0)
         return _intersects_df(buffer, df,sindex)
   
 def _intersects_df(geom, df,sindex):
@@ -1073,89 +1064,41 @@ def line_endpoints(line):
     Returns:
         [type]: [description]
     """    
-    start = pygeom.get_point(line,0)
-    end = pygeom.get_point(line,-1)
+    start = shapely.get_point(line,0)
+    end = shapely.get_point(line,-1)
     return start, end
     
-def split_edge_at_points(edge, points, tolerance=1e-9):
-    """Split edge at point/multipoint
-
-    Args:
-        edge ([type]): [description]
-        points (pygeos.geometry): [description]
-        tolerance ([type], optional): [description]. Defaults to 1e-9.
-
-    Returns:
-        [type]: [description]
-    """    
-    try:
-        segments = split_line(edge.geometry, points, tolerance)
-    except ValueError:
-        # if splitting fails, e.g. becuase points is empty GeometryCollection
-        segments = [edge.geometry]
-    edges = DataFrame([edge] * len(segments))
-    edges.geometry = segments
-    return edges
-
-def split_line(line, points, tolerance=1e-9):
-    """Split line at point or multipoint, within some tolerance
-
-    Args:
-        line (pygeos.geometry): [description]
-        points (pygeos.geometry): [description]
-        tolerance ([type], optional): [description]. Defaults to 1e-9.
-
-    Returns:
-        [type]: [description]
-    """    
-    to_split = snap_line(line, points, tolerance)
-    return list(split(to_split, points))
-
 def snap_line(line, points, tolerance=1e-9):
     """Snap a line to points within tolerance, inserting vertices as necessary
 
     Args:
-        line (pygeos.geometry): [description]
-        points (pygeos.geometry): [description]
+        line (shapely.geometry): [description]
+        points (shapely.geometry): [description]
         tolerance ([type], optional): [description]. Defaults to 1e-9.
 
     Returns:
         [type]: [description]
     """    
-    if  pygeom.get_type_id(edge.geometry) == 0:
-        if pygeos.distance(point,line) < tolerance:
-            line = pygeos.snap(line, points, tolerance=1e-9)
-    elif pygeom.get_type_id(edge.geometry) == 4:
-        points = [point for point in points if pygeos.distance(point,line) < tolerance]
+    if  shapely.get_type_id(line.geometry) == 0:
+        if shapely.distance(point,line) < tolerance:
+            line = shapely.snap(line, points, tolerance=1e-9)
+    elif shapely.get_type_id(line.geometry) == 4:
+        points = [point for point in points if shapely.distance(point,line) < tolerance]
         for point in points:
-            line = pygeos.snap(line, points, tolerance=1e-9)
+            line = shapely.snap(line, points, tolerance=1e-9)
     return line
 
 def nearest_point_on_line(point, line):
     """Return the nearest point on a line
 
     Args:
-        point (pygeos.geometry): [description]
-        line (pygeos.geometry): [description]
+        point (shapely.geometry): [description]
+        line (shapely.geometry): [description]
 
     Returns:
         [type]: [description]
     """    
     return line.interpolate(line.project(point))
-
-def set_precision(geom, precision):
-    """Set geometry precision
-
-    Args:
-        geom (pygeos.geometry): [description]
-        precision ([type]): [description]
-
-    Returns:
-        [type]: [description]
-    """    
-    geom_mapping = mapping(geom)
-    geom_mapping['coordinates'] = np.round(np.array(geom_mapping['coordinates']), precision)
-    return shape(geom_mapping)
 
 def reset_ids(network):
     """Resets the ids of the nodes and edges, editing the refereces in edge table 
@@ -1204,38 +1147,38 @@ def nearest_network_node_list(gdf_admin,gdf_nodes,sg):
     gdf_nodes.reset_index(drop=True,inplace=True)
     nodes = {}
     for admin_ in gdf_admin.itertuples():
-        if (pygeos.distance((admin_.geometry),gdf_nodes.geometry).min()) > 0.005:
+        if (shapely.distance((admin_.geometry),gdf_nodes.geometry).min()) > 0.005:
             continue
-        nodes[admin_.id] = gdf_nodes.iloc[pygeos.distance((admin_.geometry),gdf_nodes.geometry).idxmin()].id        
+        nodes[admin_.id] = gdf_nodes.iloc[shapely.distance((admin_.geometry),gdf_nodes.geometry).idxmin()].id        
     return nodes
 
 def split_edges_at_nodes(network, tolerance=1e-9):
     """Split network edges where they intersect node geometries
     """
-    sindex_nodes = pygeos.STRtree(network.nodes['geometry'])
-    sindex_edges = pygeos.STRtree(network.edges['geometry'])
+    sindex_nodes = shapely.STRtree(network.nodes['geometry'])
+    sindex_edges = shapely.STRtree(network.edges['geometry'])
     attributes = [x for x in network.edges.columns if x not in ['index','geometry','osm_id']]
     grab_all_edges = []
     for edge in (network.edges.itertuples(index=False)):
         hits_nodes = nodes_intersecting(edge.geometry,network.nodes['geometry'],sindex_nodes, tolerance=1e-9)
         hits_edges = nodes_intersecting(edge.geometry,network.edges['geometry'],sindex_edges, tolerance=1e-9)
-        hits_edges = pygeos.set_operations.intersection(edge.geometry,hits_edges)
+        hits_edges = shapely.set_operations.intersection(edge.geometry,hits_edges)
         try:
-            hits_edges = (hits_edges[~(pygeos.predicates.covers(hits_edges,edge.geometry))])
-            hits_edges = pd.Series([pygeos.points(item) for sublist in [pygeos.get_coordinates(x) for x in hits_edges] for item in sublist],name='geometry')
-            hits = [pygeos.points(x) for x in pygeos.coordinates.get_coordinates(
-                pygeos.constructive.extract_unique_points(pygeos.multipoints(pd.concat([hits_nodes,hits_edges]).values)))]
+            hits_edges = (hits_edges[~(shapely.predicates.covers(hits_edges,edge.geometry))])
+            hits_edges = pd.Series([shapely.points(item) for sublist in [shapely.get_coordinates(x) for x in hits_edges] for item in sublist],name='geometry')
+            hits = [shapely.points(x) for x in shapely.coordinates.get_coordinates(
+                shapely.constructive.extract_unique_points(shapely.multipoints(pd.concat([hits_nodes,hits_edges]).values)))]
         except TypeError:
             return hits_edges
         hits = pd.DataFrame(hits,columns=['geometry'])    
         # get points and geometry as list of coordinates
-        split_points = pygeos.coordinates.get_coordinates(pygeos.snap(hits,edge.geometry,tolerance=1e-9))
-        coor_geom = pygeos.coordinates.get_coordinates(edge.geometry)
+        split_points = shapely.coordinates.get_coordinates(shapely.snap(hits,edge.geometry,tolerance=1e-9))
+        coor_geom = shapely.coordinates.get_coordinates(edge.geometry)
         # potentially split to multiple edges
         split_locs = np.argwhere(np.isin(coor_geom, split_points).all(axis=1))[:,0]
         split_locs = list(zip(split_locs.tolist(), split_locs.tolist()[1:]))
         new_edges = [coor_geom[split_loc[0]:split_loc[1]+1] for split_loc in split_locs]
-        grab_all_edges.append([[edge.osm_id]*len(new_edges),[pygeos.linestrings(edge) for edge in new_edges],[edge[1:-1]]*len(new_edges)])
+        grab_all_edges.append([[edge.osm_id]*len(new_edges),[shapely.linestrings(edge) for edge in new_edges],[edge[1:-1]]*len(new_edges)])
     big_list = [list(zip(x[0],x[1],x[2])) for x in grab_all_edges] 
     # combine all new edges
     edges = pd.DataFrame([[item[0],item[1]]+list(item[2]) for sublist in big_list for item in sublist],
@@ -1477,8 +1420,8 @@ def ferry_connected_network(country,data_path,tqdm_on=True):
 
     # loop through ferry connectors to add to edges of main network
     for link in connectors.itertuples():
-        start = pygeos.get_point(link.geometry,0)
-        end = pygeos.get_point(link.geometry,-1)
+        start = shapely.get_point(link.geometry,0)
+        end = shapely.get_point(link.geometry,-1)
         from_id = nodes.id.loc[nodes.geometry==start]
         to_id = nodes.id.loc[nodes.geometry==end]
         edges = edges.append({  'osm_id':   np.random.random_integers(1e7,1e8),
@@ -1491,8 +1434,8 @@ def ferry_connected_network(country,data_path,tqdm_on=True):
 
     # loop through ferry network to add to edges of main network
     for iter_,ferry in ferry_network.iterrows():
-        start = pygeos.get_point(ferry.geometry,0)
-        end = pygeos.get_point(ferry.geometry,-1)
+        start = shapely.get_point(ferry.geometry,0)
+        end = shapely.get_point(ferry.geometry,-1)
         from_id = nodes.id.loc[nodes.geometry==start]
         to_id = nodes.id.loc[nodes.geometry==end]
         #if not from_id.empty and not to_id.empty: 
@@ -1513,8 +1456,8 @@ def ferry_connected_network(country,data_path,tqdm_on=True):
     net_final = simplified_network(new_edges,fill_attributes_run=False)
 
     net_final.edges.osm_id = net_final.edges.osm_id.astype(int)
-    net_final.edges.geometry = pygeos.to_wkb(net_final.edges.geometry)
-    net_final.nodes.geometry = pygeos.to_wkb(net_final.nodes.geometry)
+    net_final.edges.geometry = shapely.to_wkb(net_final.edges.geometry)
+    net_final.nodes.geometry = shapely.to_wkb(net_final.nodes.geometry)
 
     
     feather.write_dataframe(net_final.edges.copy(),data_path.joinpath('road_ferry_networks','{}-edges.feather'.format(country)))
@@ -1543,17 +1486,17 @@ def connect_ferries(country,full_network,ferry_network):
     for iter_,ferry in (ferry_network.iterrows()):
 
         # create buffer around ferry to get the full network around the ferry ends
-        ferry_buffer = pygeos.buffer(ferry.geometry,0.05)
+        ferry_buffer = shapely.buffer(ferry.geometry,0.05)
 
         # collect the road network around the ferry
-        sub_full_network = full_network.loc[pygeos.intersects(full_network.geometry,ferry_buffer)].reset_index(drop=True)
-        sub_main_network_nodes = [[pygeos.points(pygeos.get_coordinates(x)[0]),pygeos.points(pygeos.get_coordinates(x)[1])] for x in sub_full_network.loc[sub_full_network.highway.isin(road_types)].geometry]
+        sub_full_network = full_network.loc[shapely.intersects(full_network.geometry,ferry_buffer)].reset_index(drop=True)
+        sub_main_network_nodes = [[shapely.points(shapely.get_coordinates(x)[0]),shapely.points(shapely.get_coordinates(x)[1])] for x in sub_full_network.loc[sub_full_network.highway.isin(road_types)].geometry]
         sub_main_network_nodes =  [item for sublist in sub_main_network_nodes for item in sublist]
         sub_main_network_nodes = pd.DataFrame(sub_main_network_nodes,columns=['geometry'])
         sub_main_network_nodes['id'] = [x+1 for x in range(len(sub_main_network_nodes))]
 
         # create a dataframe of the ferry nodes
-        ferry_nodes = pd.DataFrame([pygeos.points(pygeos.get_coordinates(ferry.geometry)[0]),pygeos.points(pygeos.get_coordinates(ferry.geometry)[-1])],columns=['geometry'])
+        ferry_nodes = pd.DataFrame([shapely.points(shapely.get_coordinates(ferry.geometry)[0]),shapely.points(shapely.get_coordinates(ferry.geometry)[-1])],columns=['geometry'])
         ferry_nodes['id'] = [1,2]
 
         # create mini simplified network and graph of network around ferry
@@ -1604,31 +1547,31 @@ def connect_ferries(country,full_network,ferry_network):
 
                     # check if they are really connected, if not, we need to create a little linestring to connect the new connector path and the ferry
                     if len(p_1) > 0: 
-                        linestring = pygeos.linear.line_merge(pygeos.multilinestrings(path_1['geometry'].values))
+                        linestring = shapely.linear.line_merge(shapely.multilinestrings(path_1['geometry'].values))
 
-                        endpoint1 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[0]
-                        endpoint2 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[-1]
+                        endpoint1 = shapely.points(shapely.coordinates.get_coordinates(linestring))[0]
+                        endpoint2 = shapely.points(shapely.coordinates.get_coordinates(linestring))[-1]
 
-                        endpoint1_distance = pygeos.distance(start_coords,endpoint1)
-                        endpoint2_distance = pygeos.distance(start_coords,endpoint2)
+                        endpoint1_distance = shapely.distance(start_coords,endpoint1)
+                        endpoint2_distance = shapely.distance(start_coords,endpoint2)
 
                         if (endpoint1_distance == 0)  | (endpoint2_distance == 0):
                             collect_connectors.append(linestring)
                         elif endpoint1_distance < endpoint2_distance:
-                            collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(start_coords),pygeos.coordinates.get_coordinates(linestring)),axis=0)))
+                            collect_connectors.append(shapely.linestrings(np.concatenate((shapely.coordinates.get_coordinates(start_coords),shapely.coordinates.get_coordinates(linestring)),axis=0)))
                         else:
-                            collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(linestring),pygeos.coordinates.get_coordinates(start_coords)),axis=0))) 
+                            collect_connectors.append(shapely.linestrings(np.concatenate((shapely.coordinates.get_coordinates(linestring),shapely.coordinates.get_coordinates(start_coords)),axis=0))) 
                     else:
                         local_network = net.edges.loc[net.edges.id.isin(pd.DataFrame.from_dict(collect_start_paths).T.min()[0])]
-                        sub_local_network = [[pygeos.points(pygeos.get_coordinates(x)[0]),pygeos.points(pygeos.get_coordinates(x)[-1])] for x in local_network.loc[local_network.highway.isin(road_types)].geometry]
+                        sub_local_network = [[shapely.points(shapely.get_coordinates(x)[0]),shapely.points(shapely.get_coordinates(x)[-1])] for x in local_network.loc[local_network.highway.isin(road_types)].geometry]
                         sub_local_network =  [item for sublist in sub_local_network for item in sublist]
-                        location_closest_point = np.where(pygeos.distance(start_coords[0],sub_local_network) == np.amin(pygeos.distance(start_coords[0],sub_local_network)))[0][0]
-                        collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.get_coordinates(start_coords),pygeos.get_coordinates(sub_local_network[location_closest_point])),axis=0)))
+                        location_closest_point = np.where(shapely.distance(start_coords[0],sub_local_network) == np.amin(shapely.distance(start_coords[0],sub_local_network)))[0][0]
+                        collect_connectors.append(shapely.linestrings(np.concatenate((shapely.get_coordinates(start_coords),shapely.get_coordinates(sub_local_network[location_closest_point])),axis=0)))
             
             # if there are no paths, but if the ferry node is still very close to the main network, we create a new linestring to connect them up (sometimes the ferry dock has no road)
-            elif pygeos.distance(sub_main_network_nodes.geometry,start_coords).min() < 0.01:
-                get_new_end_point = pygeos.coordinates.get_coordinates(sub_main_network_nodes.iloc[pygeos.distance(sub_main_network_nodes.geometry,start_coords).idxmin()].geometry)
-                collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(start_coords),get_new_end_point),axis=0)))
+            elif shapely.distance(sub_main_network_nodes.geometry,start_coords).min() < 0.01:
+                get_new_end_point = shapely.coordinates.get_coordinates(sub_main_network_nodes.iloc[shapely.distance(sub_main_network_nodes.geometry,start_coords).idxmin()].geometry)
+                collect_connectors.append(shapely.linestrings(np.concatenate((shapely.coordinates.get_coordinates(start_coords),get_new_end_point),axis=0)))
 
             # collect all shortest path from one side of the ferry to main network nodes
             collect_end_paths = {}
@@ -1654,31 +1597,31 @@ def connect_ferries(country,full_network,ferry_network):
                     # check if they are really connected, if not, we need to create a little linestring to connect the new connector path and the ferry
                     path_2 = net.edges.loc[net.edges.id.isin(p_2)]
                     if len(p_2) > 0: 
-                        linestring = pygeos.linear.line_merge(pygeos.multilinestrings(path_2['geometry'].values))
+                        linestring = shapely.linear.line_merge(shapely.multilinestrings(path_2['geometry'].values))
 
-                        endpoint1 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[0]
-                        endpoint2 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[-1]
+                        endpoint1 = shapely.points(shapely.coordinates.get_coordinates(linestring))[0]
+                        endpoint2 = shapely.points(shapely.coordinates.get_coordinates(linestring))[-1]
 
-                        endpoint1_distance = pygeos.distance(end_coords,endpoint1)
-                        endpoint2_distance = pygeos.distance(end_coords,endpoint2)
+                        endpoint1_distance = shapely.distance(end_coords,endpoint1)
+                        endpoint2_distance = shapely.distance(end_coords,endpoint2)
 
                         if (endpoint1_distance == 0) | (endpoint2_distance == 0):
                             collect_connectors.append(linestring)
                         elif endpoint1_distance < endpoint2_distance:
-                            collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(end_coords),pygeos.coordinates.get_coordinates(linestring)),axis=0)))
+                            collect_connectors.append(shapely.linestrings(np.concatenate((shapely.coordinates.get_coordinates(end_coords),shapely.coordinates.get_coordinates(linestring)),axis=0)))
                         else:
-                            collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(linestring),pygeos.coordinates.get_coordinates(end_coords)),axis=0)))                    
+                            collect_connectors.append(shapely.linestrings(np.concatenate((shapely.coordinates.get_coordinates(linestring),shapely.coordinates.get_coordinates(end_coords)),axis=0)))                    
                     else:
                         local_network = net.edges.loc[net.edges.id.isin(pd.DataFrame.from_dict(collect_end_paths).T.min()[0])]
-                        sub_local_network = [[pygeos.points(pygeos.get_coordinates(x)[0]),pygeos.points(pygeos.get_coordinates(x)[-1])] for x in local_network.loc[local_network.highway.isin(road_types)].geometry]
+                        sub_local_network = [[shapely.points(shapely.get_coordinates(x)[0]),shapely.points(shapely.get_coordinates(x)[-1])] for x in local_network.loc[local_network.highway.isin(road_types)].geometry]
                         sub_local_network =  [item for sublist in sub_local_network for item in sublist]
-                        location_closest_point = np.where(pygeos.distance(end_coords[0],sub_local_network) == np.amin(pygeos.distance(end_coords[0],sub_local_network)))[0][0]
-                        collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.get_coordinates(end_coords),pygeos.get_coordinates(sub_local_network[location_closest_point])),axis=0)))
+                        location_closest_point = np.where(shapely.distance(end_coords[0],sub_local_network) == np.amin(shapely.distance(end_coords[0],sub_local_network)))[0][0]
+                        collect_connectors.append(shapely.linestrings(np.concatenate((shapely.get_coordinates(end_coords),shapely.get_coordinates(sub_local_network[location_closest_point])),axis=0)))
 
             # if there are no paths, but if the ferry node is still very close to the main network, we create a new linestring to connect them up (sometimes the ferry dock has no road)
-            elif pygeos.distance(sub_main_network_nodes.geometry,end_coords).min() < 0.01:
-                get_new_end_point = pygeos.coordinates.get_coordinates(sub_main_network_nodes.iloc[pygeos.distance(sub_main_network_nodes.geometry,end_coords).idxmin()].geometry)
-                collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(end_coords),get_new_end_point),axis=0)))
+            elif shapely.distance(sub_main_network_nodes.geometry,end_coords).min() < 0.01:
+                get_new_end_point = shapely.coordinates.get_coordinates(sub_main_network_nodes.iloc[shapely.distance(sub_main_network_nodes.geometry,end_coords).idxmin()].geometry)
+                collect_connectors.append(shapely.linestrings(np.concatenate((shapely.coordinates.get_coordinates(end_coords),get_new_end_point),axis=0)))
 
         # ferry is stand-alone, so we continue because there is nothing to connect
         elif len(ferry_nodes_graph) == 0:
@@ -1708,31 +1651,31 @@ def connect_ferries(country,full_network,ferry_network):
 
                 # check if they are really connected, if not, we need to create a little linestring to connect the new connector path and the ferry
                 if len(p_1) > 0: 
-                    linestring = pygeos.linear.line_merge(pygeos.multilinestrings(path_1['geometry'].values))
+                    linestring = shapely.linear.line_merge(shapely.multilinestrings(path_1['geometry'].values))
 
-                    endpoint1 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[0]
-                    endpoint2 = pygeos.points(pygeos.coordinates.get_coordinates(linestring))[-1]
+                    endpoint1 = shapely.points(shapely.coordinates.get_coordinates(linestring))[0]
+                    endpoint2 = shapely.points(shapely.coordinates.get_coordinates(linestring))[-1]
 
-                    endpoint1_distance = pygeos.distance(start_coords,endpoint1)
-                    endpoint2_distance = pygeos.distance(start_coords,endpoint2)
+                    endpoint1_distance = shapely.distance(start_coords,endpoint1)
+                    endpoint2_distance = shapely.distance(start_coords,endpoint2)
 
                     if (endpoint1_distance == 0) | (endpoint2_distance == 0):
                         collect_connectors.append(linestring)
                     elif endpoint1_distance < endpoint2_distance:
-                        collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(start_coords),pygeos.coordinates.get_coordinates(linestring)),axis=0)))
+                        collect_connectors.append(shapely.linestrings(np.concatenate((shapely.coordinates.get_coordinates(start_coords),shapely.coordinates.get_coordinates(linestring)),axis=0)))
                     else:
-                        collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.coordinates.get_coordinates(linestring),pygeos.coordinates.get_coordinates(start_coords)),axis=0)))            
+                        collect_connectors.append(shapely.linestrings(np.concatenate((shapely.coordinates.get_coordinates(linestring),shapely.coordinates.get_coordinates(start_coords)),axis=0)))            
                 else:
                     local_network = net.edges.loc[net.edges.id.isin(pd.DataFrame.from_dict(collect_start_paths).T.min()[0])]
-                    sub_local_network = [[pygeos.points(pygeos.get_coordinates(x)[0]),pygeos.points(pygeos.get_coordinates(x)[-1])] for x in local_network.loc[local_network.highway.isin(road_types)].geometry]
+                    sub_local_network = [[shapely.points(shapely.get_coordinates(x)[0]),shapely.points(shapely.get_coordinates(x)[-1])] for x in local_network.loc[local_network.highway.isin(road_types)].geometry]
                     sub_local_network =  [item for sublist in sub_local_network for item in sublist]
-                    location_closest_point = np.where(pygeos.distance(start_coords[0],sub_local_network) == np.amin(pygeos.distance(start_coords[0],sub_local_network)))[0][0]
-                    collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.get_coordinates(start_coords),pygeos.get_coordinates(sub_local_network[location_closest_point])),axis=0)))
+                    location_closest_point = np.where(shapely.distance(start_coords[0],sub_local_network) == np.amin(shapely.distance(start_coords[0],sub_local_network)))[0][0]
+                    collect_connectors.append(shapely.linestrings(np.concatenate((shapely.get_coordinates(start_coords),shapely.get_coordinates(sub_local_network[location_closest_point])),axis=0)))
 
             # if there are no paths, but if the ferry node is still very close to the main network, we create a new linestring to connect them up (sometimes the ferry dock has no road)
-            elif pygeos.distance(sub_main_network_nodes.geometry,start_coords).min() < 0.01:
-                get_new_end_point = pygeos.get_coordinates(sub_main_network_nodes.iloc[pygeos.distance(sub_main_network_nodes.geometry,start_coords).idxmin()].geometry)
-                collect_connectors.append(pygeos.linestrings(np.concatenate((pygeos.get_coordinates(start_coords),get_new_end_point),axis=0)))
+            elif shapely.distance(sub_main_network_nodes.geometry,start_coords).min() < 0.01:
+                get_new_end_point = shapely.get_coordinates(sub_main_network_nodes.iloc[shapely.distance(sub_main_network_nodes.geometry,start_coords).idxmin()].geometry)
+                collect_connectors.append(shapely.linestrings(np.concatenate((shapely.get_coordinates(start_coords),get_new_end_point),axis=0)))
     
     return pd.DataFrame(collect_connectors,columns=['geometry'])
 
@@ -1757,8 +1700,8 @@ def connect_ferries(country,full_network,ferry_network):
 #     nodes = network.nodes.copy() 
 #     edges = network.edges.copy()  
 #     node_degree = nodes.degree.to_numpy()
-#     sindex_nodes = pygeos.STRtree(nodes['geometry'])
-#     sindex_edges = pygeos.STRtree(edges['geometry'])
+#     sindex_nodes = shapely.STRtree(nodes['geometry'])
+#     sindex_edges = shapely.STRtree(edges['geometry'])
 #     new_edges = []
 #     edge_id_counter = len(edges)
 #     counter = 0
@@ -1777,13 +1720,13 @@ def connect_ferries(country,full_network,ferry_network):
 
 #         if len(near_start) > 1: 
 #             near_start = min([edges.iloc[match_idx] for match_idx in near_start],
-#                 key=lambda match: pygeos.distance(start,match.geometry))
+#                 key=lambda match: shapely.distance(start,match.geometry))
 #             near_start = near_start.id
 
 #         else: near_start = edges.id.iloc[near_start[0]]
 #         if len(near_end) > 1: 
 #             near_end = min([edges.iloc[match_idx] for match_idx in near_end],
-#                 key=lambda match: pygeos.distance(end,match.geometry))
+#                 key=lambda match: shapely.distance(end,match.geometry))
 #             near_end=near_end.id
 #         else: near_end = edges.id.iloc[near_end[0]]
 #         if near_end==near_start: 
@@ -1792,23 +1735,23 @@ def connect_ferries(country,full_network,ferry_network):
 #         #pick nodes to create edge
 #         near_start = edges.iloc[near_start]
 #         near_end = edges.iloc[near_end]
-#         new_line_start = pygeos.coordinates.get_coordinates(route_geom)
+#         new_line_start = shapely.coordinates.get_coordinates(route_geom)
 
-#         from_is_closer = pygeos.measurement.distance(start, nodes.iloc[near_start.from_id].geometry) < pygeos.measurement.distance(start, nodes.iloc[near_start.to_id].geometry)
+#         from_is_closer = shapely.measurement.distance(start, nodes.iloc[near_start.from_id].geometry) < shapely.measurement.distance(start, nodes.iloc[near_start.to_id].geometry)
 #         if from_is_closer:
 #             start_id = near_start.from_id
 #         else:
 #             start_id = near_start.to_id
 #         node_degree[start_id] += 1
-#         new_line = np.concatenate((pygeos.coordinates.get_coordinates(nodes.iloc[start_id].geometry),new_line_start))
-#         from_is_closer = pygeos.measurement.distance(end, nodes.iloc[near_end.from_id].geometry) < pygeos.measurement.distance(end, nodes.iloc[near_end.to_id].geometry)
+#         new_line = np.concatenate((shapely.coordinates.get_coordinates(nodes.iloc[start_id].geometry),new_line_start))
+#         from_is_closer = shapely.measurement.distance(end, nodes.iloc[near_end.from_id].geometry) < shapely.measurement.distance(end, nodes.iloc[near_end.to_id].geometry)
 #         if from_is_closer:
 #             end_id = near_end.from_id
 #         else:
 #             end_id = near_end.to_id
 #         node_degree[end_id] += 1
-#         new_line = np.concatenate((new_line,pygeos.coordinates.get_coordinates(nodes.iloc[end_id].geometry)))
-#         new_edges.append({'osm_id':route.osm_id,'geometry': pygeos.linestrings(new_line),'highway':route.highway,'id':edge_id_counter,'from_id':start_id,'to_id':end_id,'distance':999,'time':999})
+#         new_line = np.concatenate((new_line,shapely.coordinates.get_coordinates(nodes.iloc[end_id].geometry)))
+#         new_edges.append({'osm_id':route.osm_id,'geometry': shapely.linestrings(new_line),'highway':route.highway,'id':edge_id_counter,'from_id':start_id,'to_id':end_id,'distance':999,'time':999})
 
 #         counter+=1
         

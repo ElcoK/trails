@@ -1,16 +1,13 @@
 import os,sys
+
+from osgeo import gdal
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
-import pygeos
-from osgeo import gdal
+
 import igraph as ig
-import contextily as ctx
 from rasterstats import zonal_stats
-import pylab as pl
-from IPython import display
-import seaborn as sns
 import subprocess
 import shutil
 
@@ -20,11 +17,10 @@ import pathlib
 code_path = (pathlib.Path(__file__).parent.absolute())
 gdal.SetConfigOption("OSM_CONFIG_FILE", os.path.join(code_path,'..','..',"osmconf.ini"))
 
-from shapely.wkb import loads
 data_path = os.path.join('..','data')
 
 from simplify import *
-from extract import railway,ferries,mainRoads,roads
+from damagescanner.vector import mainRoads,roads
 from population_OD import create_bbox,create_grid
 
 pd.options.mode.chained_assignment = None  
@@ -104,11 +100,9 @@ def get_gdp_values(gdf,data_path):
         [type]: [description]
     """    
     world_pop = os.path.join(data_path,'global_gdp','GDP_2015.tif')
-    gdf['geometry'] = gdf.geometry.apply(lambda x: loads(pygeos.to_wkb(x)))
     gdp = list(item['sum'] for item in zonal_stats(gdf.geometry,world_pop,
                 stats="sum"))
     gdp = [x if x is not None else 0 for x in gdp]
-    gdf['geometry'] = pygeos.from_shapely(gdf.geometry)
     return gdp
 
 def country_grid_gdp_filled(trans_network,country,data_path,rough_grid_split=100,from_main_graph=False):
@@ -123,25 +117,24 @@ def country_grid_gdp_filled(trans_network,country,data_path,rough_grid_split=100
     """    
     if from_main_graph==True:
         node_df = trans_network.copy()
-        envelop = pygeos.envelope(pygeos.multilinestrings(node_df.geometry.values))
-        height = np.sqrt(pygeos.area(envelop)/rough_grid_split)        
+        envelop = shapely.envelope(shapely.multilinestrings(node_df.geometry.values))
+        height = np.sqrt(shapely.area(envelop)/rough_grid_split)        
     else:
         node_df = trans_network.nodes.copy()
         node_df.geometry,approximate_crs = convert_crs(node_df)
-        envelop = pygeos.envelope(pygeos.multilinestrings(node_df.geometry.values))
-        height = np.sqrt(pygeos.area(envelop)/rough_grid_split)    
+        envelop = shapely.envelope(shapely.multilinestrings(node_df.geometry.values))
+        height = np.sqrt(shapely.area(envelop)/rough_grid_split)    
 
     gdf_admin = pd.DataFrame(create_grid(create_bbox(node_df),height),columns=['geometry'])
 
      #load data and convert to pygeos
     country_shape = gpd.read_file(os.path.join(data_path,'GADM','gadm36_levels.gpkg'),layer=0)
     country_shape = pd.DataFrame(country_shape.loc[country_shape.GID_0==country])
-    country_shape.geometry = pygeos.from_shapely(country_shape.geometry)
 
-    gdf_admin = pygeos.intersection(gdf_admin,country_shape.geometry)
-    gdf_admin = gdf_admin.loc[~pygeos.is_empty(gdf_admin.geometry)]
+    gdf_admin = shapely.intersection(gdf_admin,country_shape.geometry)
+    gdf_admin = gdf_admin.loc[~shapely.is_empty(gdf_admin.geometry)]
         
-    gdf_admin['centroid'] = pygeos.centroid(gdf_admin.geometry)
+    gdf_admin['centroid'] = shapely.centroid(gdf_admin.geometry)
     gdf_admin['km2'] = area(gdf_admin)
     gdf_admin['gdp'] = get_gdp_values(gdf_admin,data_path)
     gdf_admin = gdf_admin.loc[gdf_admin.gdp > 0].reset_index()
@@ -159,8 +152,8 @@ def convert_crs(gdf,current_crs="epsg:4326"):
         [type]: [description]
     """    
     if current_crs == "epsg:4326":
-        lat = pygeos.geometry.get_y(pygeos.centroid(gdf['geometry'].iloc[0]))
-        lon = pygeos.geometry.get_x(pygeos.centroid(gdf['geometry'].iloc[0]))
+        lat = shapely.geometry.get_y(shapely.centroid(gdf['geometry'].iloc[0]))
+        lon = shapely.geometry.get_x(shapely.centroid(gdf['geometry'].iloc[0]))
         # formula below based on :https://gis.stackexchange.com/a/190209/80697         
         approximate_crs = "epsg:" + str(int(32700-np.round((45+lat)/90,0)*100+np.round((183+lon)/6,0)))
     else:
@@ -168,10 +161,10 @@ def convert_crs(gdf,current_crs="epsg:4326"):
         
     #from pygeos/issues/95
     geometries = gdf['geometry']
-    coords = pygeos.get_coordinates(geometries)
+    coords = shapely.get_coordinates(geometries)
     transformer=pyproj.Transformer.from_crs(current_crs, approximate_crs,always_xy=True)
     new_coords = transformer.transform(coords[:, 0], coords[:, 1])
-    result = pygeos.set_coordinates(geometries.copy(), np.array(new_coords).T)
+    result = shapely.set_coordinates(geometries.copy(), np.array(new_coords).T)
     return result,approximate_crs
 
 def area(gdf,km=True):
@@ -185,9 +178,9 @@ def area(gdf,km=True):
         [type]: [description]
     """    
     if km:
-        return pygeos.area(convert_crs(gdf)[0])/1e6
+        return shapely.area(convert_crs(gdf)[0])/1e6
     else:
-        return pygeos.area(convert_crs(gdf)[0])
+        return shapely.area(convert_crs(gdf)[0])
 
 def get_basetable(country,data_path):
     
@@ -327,7 +320,7 @@ def nearest_network_node_list(gdf_admin,gdf_nodes,sg):
     gdf_nodes.reset_index(drop=True,inplace=True)
     nodes = {}
     for admin_ in gdf_admin.itertuples():
-        nodes[admin_.name] = gdf_nodes.iloc[pygeos.distance((admin_.centroid),gdf_nodes.geometry).idxmin()].id        
+        nodes[admin_.name] = gdf_nodes.iloc[shapely.distance((admin_.centroid),gdf_nodes.geometry).idxmin()].id        
     return nodes
 
 def set_max_flow(segment):
